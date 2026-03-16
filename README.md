@@ -19,6 +19,9 @@ Operational runbook:
 Kubernetes manifests (k3s lab):
 - `k8s/` (see `k8s/README.md`)
 
+Helm chart (k3s lab):
+- `charts/datalake-provisioner`
+
 Not implemented yet:
 - idempotency key handling
 - Kubernetes deployment automation for UI/backend
@@ -146,6 +149,24 @@ Push:
 ```bash
 docker login
 docker push <dockerhub-username>/datalake-provisioner:0.1.1
+```
+
+## Helm install (lab)
+Install/upgrade with explicit values for RGW + token:
+
+```bash
+helm upgrade --install datalake-provisioner ./charts/datalake-provisioner \
+  --namespace datalake --create-namespace \
+  --set provisioner.internalToken=change-me \
+  --set provisioner.rgwEndpoint=http://192.168.3.251:7480 \
+  --set provisioner.rgwAccessKeyId=<RGW_ACCESS_KEY_ID> \
+  --set provisioner.rgwSecretAccessKey=<RGW_SECRET_ACCESS_KEY>
+```
+
+Then port-forward:
+
+```bash
+kubectl -n datalake port-forward svc/datalake-provisioner-datalake-provisioner 8081:8081
 ```
 
 ## Quick test

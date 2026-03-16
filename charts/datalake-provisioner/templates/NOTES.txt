@@ -1,0 +1,12 @@
+1. Get pods:
+   kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Port-forward API:
+   kubectl port-forward svc/{{ include "datalake-provisioner.fullname" . }} 8081:{{ .Values.service.port }}
+
+3. Test provision:
+   curl -X POST http://127.0.0.1:8081/v1/lakes \
+     -H 'Content-Type: application/json' \
+     -H 'X-Internal-Token: {{ .Values.provisioner.internalToken }}' \
+     -H 'X-Tenant: tenant-a' \
+     -d '{"userId":"user-1","sizeGiB":10}'

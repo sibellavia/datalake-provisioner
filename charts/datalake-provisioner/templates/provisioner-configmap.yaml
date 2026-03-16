@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "datalake-provisioner.fullname" . }}-config
+  labels:
+    {{- include "datalake-provisioner.labels" . | nindent 4 }}
+data:
+  HTTP_PORT: {{ .Values.provisioner.httpPort | quote }}
+  READ_HEADER_TIMEOUT_SECONDS: {{ .Values.provisioner.readHeaderTimeoutSeconds | quote }}
+
+  RGW_ENDPOINT: {{ .Values.provisioner.rgwEndpoint | quote }}
+  RGW_ADMIN_PATH: {{ .Values.provisioner.rgwAdminPath | quote }}
+  RGW_REGION: {{ .Values.provisioner.rgwRegion | quote }}
+  RGW_INSECURE_SKIP_VERIFY: {{ .Values.provisioner.rgwInsecureSkipVerify | quote }}

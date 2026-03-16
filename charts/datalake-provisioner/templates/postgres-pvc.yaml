@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "datalake-provisioner.fullname" . }}-postgres-data
+  labels:
+    {{- include "datalake-provisioner.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storageSize }}
+  {{- if .Values.postgres.storageClassName }}
+  storageClassName: {{ .Values.postgres.storageClassName | quote }}
+  {{- end }}

@@ -1,5 +1,5 @@
 .env
-secret.yaml
-postgres-secret.yaml
+k8s/secret.yaml
+k8s/postgres-secret.yaml
 *.log
 .DS_Store

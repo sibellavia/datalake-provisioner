@@ -157,6 +157,10 @@ radosgw-admin bucket list | grep <bucketName>
 3. Keyring path under `/etc/pve/priv` caused permission/ownership issues for RGW daemon user.
 4. Typo in keyring path (`randosgw` vs `radosgw`) prevented startup.
 5. `caps add` initially applied only one cap; semicolon-separated caps string fixed it.
+6. k3s node is `linux/amd64`: image had to be pushed for amd64 (`buildx --platform linux/amd64`).
+7. Kubernetes `runAsNonRoot` with distroless required numeric `runAsUser/runAsGroup` (65532).
+8. Existing Postgres data dir can skip init DB creation; `datalake` DB was created manually, then migration job re-run.
+9. Invalid `DATABASE_URL` in secret caused bootstrap failure (`sslmode` parse error).
 
 ---
 

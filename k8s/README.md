@@ -3,7 +3,7 @@
 These manifests deploy:
 - PostgreSQL (single-instance lab setup)
 - DB migration job (`0001_init.up.sql`)
-- Data Lake Provisioner API (`dev3at/datalake-provisioner:0.1.0`)
+- Data Lake Provisioner API (`dev3at/datalake-provisioner:0.1.1`)
 - ClusterIP service + optional Ingress
 
 ## 1) Create secrets from templates

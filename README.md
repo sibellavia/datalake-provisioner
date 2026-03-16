@@ -88,20 +88,20 @@ go run ./cmd/server
 Build locally:
 
 ```bash
-docker build -t datalake-provisioner:0.1.0 .
+docker build -t datalake-provisioner:0.1.1 .
 ```
 
 Tag for Docker Hub:
 
 ```bash
-docker tag datalake-provisioner:0.1.0 <dockerhub-username>/datalake-provisioner:0.1.0
+docker tag datalake-provisioner:0.1.1 <dockerhub-username>/datalake-provisioner:0.1.1
 ```
 
 Push:
 
 ```bash
 docker login
-docker push <dockerhub-username>/datalake-provisioner:0.1.0
+docker push <dockerhub-username>/datalake-provisioner:0.1.1
 ```
 
 ## Quick test

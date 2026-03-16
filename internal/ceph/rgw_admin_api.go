@@ -313,6 +313,7 @@ func (a *RGWAdminAPIAdapter) adminRequest(ctx context.Context, method, resourceP
 	}
 
 	payloadHash := hashPayload(body)
+	req.Header.Set("x-amz-content-sha256", payloadHash)
 	if err := a.signer.SignHTTP(ctx, a.creds, req, payloadHash, "s3", a.Region, time.Now().UTC()); err != nil {
 		return nil, fmt.Errorf("sign request: %w", err)
 	}

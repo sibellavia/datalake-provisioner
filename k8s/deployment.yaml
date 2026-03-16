@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: datalake-provisioner
-          image: dev3at/datalake-provisioner:0.1.0
+          image: dev3at/datalake-provisioner:0.1.1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

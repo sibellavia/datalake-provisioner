@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: datalake-provisioner
+  namespace: datalake
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+    - host: datalake-provisioner.lks.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: datalake-provisioner
+                port:
+                  number: 8081

@@ -1,0 +1,38 @@
+CREATE TABLE IF NOT EXISTS lakes (
+    lake_id              UUID PRIMARY KEY,
+    tenant_id            TEXT NOT NULL,
+    user_id              TEXT NOT NULL,
+    requested_size_gib   BIGINT NOT NULL CHECK (requested_size_gib > 0),
+    status               TEXT NOT NULL CHECK (status IN ('provisioning','ready','resizing','deleting','failed','deleted')),
+    url                  TEXT,
+    rgw_user             TEXT,
+    bucket_name          TEXT,
+    last_error           TEXT,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS operations (
+    operation_id         UUID PRIMARY KEY,
+    operation_type       TEXT NOT NULL CHECK (operation_type IN ('provision','resize','deprovision')),
+    lake_id              UUID REFERENCES lakes(lake_id) ON DELETE SET NULL,
+    tenant_id            TEXT NOT NULL,
+    status               TEXT NOT NULL CHECK (status IN ('pending','running','success','failed')),
+    error_message        TEXT,
+    started_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at             TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    tenant_id            TEXT NOT NULL,
+    idempotency_key      TEXT NOT NULL,
+    operation_id         UUID NOT NULL REFERENCES operations(operation_id) ON DELETE CASCADE,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lakes_tenant_id ON lakes(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_lakes_status ON lakes(status);
+CREATE INDEX IF NOT EXISTS idx_operations_tenant_id ON operations(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_operations_lake_id ON operations(lake_id);
+CREATE INDEX IF NOT EXISTS idx_operations_status ON operations(status);

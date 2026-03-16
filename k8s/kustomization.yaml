@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: datalake
+
+resources:
+  - namespace.yaml
+
+  # Postgres (lab)
+  - postgres-pvc.yaml
+  - postgres-deployment.yaml
+  - postgres-service.yaml
+
+  # DB migration
+  - migration-configmap.yaml
+  - migration-job.yaml
+
+  # Provisioner
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml

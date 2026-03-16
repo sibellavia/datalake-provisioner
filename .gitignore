@@ -1,0 +1,5 @@
+.env
+secret.yaml
+postgres-secret.yaml
+*.log
+.DS_Store

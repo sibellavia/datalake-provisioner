@@ -61,6 +61,7 @@ postgres:
   db: "datalake"
   user: "postgres"
   password: "postgres"
+  pgdata: "/var/lib/postgresql/data/pgdata"
   storageSize: "10Gi"
   storageClassName: ""
   resources:

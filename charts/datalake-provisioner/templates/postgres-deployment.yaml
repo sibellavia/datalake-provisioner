@@ -26,6 +26,9 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "datalake-provisioner.fullname" . }}-postgres
+          env:
+            - name: PGDATA
+              value: {{ .Values.postgres.pgdata | quote }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

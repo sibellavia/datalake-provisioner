@@ -15,6 +15,7 @@ Implemented:
 
 Operational runbook:
 - `docs/lab-ceph-rgw-setup.md` (exact lab steps/config used on Proxmox + Ceph)
+- `docs/movincloud-provisioning-flow.md` (full Movincloud -> Helm -> AKS provisioning flow)
 
 Kubernetes manifests (k3s lab):
 - `k8s/` (see `k8s/README.md`)

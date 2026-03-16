@@ -30,6 +30,10 @@ spec:
             - sh
             - -c
             - |
+              until pg_isready -h {{ include "datalake-provisioner.fullname" . }}-postgres -U {{ .Values.postgres.user }} -d {{ .Values.postgres.db }}; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
               psql -h {{ include "datalake-provisioner.fullname" . }}-postgres \
                 -U {{ .Values.postgres.user }} \
                 -d {{ .Values.postgres.db }} \

@@ -74,6 +74,50 @@ datalake-provisioner/
    - mark operation `success`
 4. on errors: mark lake `failed`, operation `failed`
 
+## End-to-end workflow (lab validated)
+1. User (or Movincloud) requests provisioning with `tenant`, `userId`, `sizeGiB`.
+2. Request reaches `datalake-provisioner` API (`POST /v1/lakes`) with:
+   - `X-Internal-Token`
+   - `X-Tenant`
+3. Provisioner stores operation/lake state in PostgreSQL.
+4. Provisioner calls Ceph RGW Admin API (`RGW_ENDPOINT`, `RGW_ADMIN_PATH=/admin`) using admin credentials.
+5. Ceph side actions performed:
+   - RGW user create/reuse (lake-scoped uid)
+   - S3 access keys ensure/create
+   - bucket create/ensure
+   - `user_quota` set and enabled to requested size
+6. Provisioner updates DB state:
+   - operation `success`
+   - lake `ready`
+7. Client queries:
+   - `GET /v1/operations/{operationId}`
+   - `GET /v1/lakes/{lakeId}`
+8. Ceph validation (manual):
+   - `radosgw-admin user info --uid <rgwUser>`
+   - `radosgw-admin bucket list | grep <bucketName>`
+
+## Manual infrastructure setup performed (lab)
+### Proxmox/Ceph host
+- Installed RGW package: `radosgw`
+- Configured and started `ceph-radosgw@rgw.pve1`
+- Added RGW config in `/etc/pve/ceph.conf`:
+  - `rgw_frontends = beast port=7480`
+  - keyring path under `/var/lib/ceph/radosgw/...`
+- Created provisioner system user and caps:
+  - `provisioner-admin`
+  - caps: `users=*;buckets=*;metadata=*;usage=*`
+
+### k3s VM
+- Deployed manifests from `k8s/` (Postgres + migration + provisioner)
+- Set Kubernetes secrets:
+  - Postgres credentials
+  - `DATABASE_URL`
+  - RGW admin access key/secret
+  - internal token
+- Built/pushed amd64 image: `dev3at/datalake-provisioner:0.1.1`
+- Set numeric security context (`runAsUser/runAsGroup=65532`) for distroless container compatibility
+- Created `datalake` DB manually (existing PG volume), then reran migration job
+
 ## Local run
 1. Run PostgreSQL and create DB.
 2. Apply migrations.

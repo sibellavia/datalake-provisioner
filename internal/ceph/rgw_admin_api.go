@@ -74,27 +74,12 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: transport}
 
 	staticCreds := credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")
-	awsCfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithRegion(region),
-		config.WithCredentialsProvider(staticCreds),
-		config.WithHTTPClient(httpClient),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(func(service, _ string, _ ...interface{}) (aws.Endpoint, error) {
-			if service == s3.ServiceID {
-				return aws.Endpoint{URL: endpoint, SigningRegion: region, HostnameImmutable: true}, nil
-			}
-			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
-		})),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("load aws config: %w", err)
-	}
-
 	creds, err := staticCreds.Retrieve(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("retrieve static credentials: %w", err)
 	}
 
-	return &RGWAdminAPIAdapter{
+	adapter := &RGWAdminAPIAdapter{
 		Endpoint:           strings.TrimRight(endpoint, "/"),
 		AdminPath:          strings.TrimRight(adminPath, "/"),
 		Region:             region,
@@ -102,12 +87,16 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 		SecretAccessKey:    secretAccessKey,
 		InsecureSkipVerify: insecureSkipVerify,
 		httpClient:         httpClient,
-		s3Client: s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-			o.UsePathStyle = true
-		}),
-		signer: v4.NewSigner(),
-		creds:  creds,
-	}, nil
+		signer:             v4.NewSigner(),
+		creds:              creds,
+	}
+
+	adapter.s3Client, err = adapter.newS3Client(context.Background(), accessKeyID, secretAccessKey)
+	if err != nil {
+		return nil, fmt.Errorf("init admin s3 client: %w", err)
+	}
+
+	return adapter, nil
 }
 
 func (a *RGWAdminAPIAdapter) Provision(ctx context.Context, in ProvisionInput) (ProvisionOutput, error) {
@@ -133,7 +122,12 @@ func (a *RGWAdminAPIAdapter) Provision(ctx context.Context, in ProvisionInput) (
 		return ProvisionOutput{}, fmt.Errorf("no s3 key available for user %s", uid)
 	}
 
-	if err := a.ensureBucket(ctx, bucketName); err != nil {
+	userS3Client, err := a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
+	if err != nil {
+		return ProvisionOutput{}, fmt.Errorf("init s3 client for user %s: %w", uid, err)
+	}
+
+	if err := a.ensureBucket(ctx, userS3Client, bucketName); err != nil {
 		return ProvisionOutput{}, err
 	}
 
@@ -158,7 +152,20 @@ func (a *RGWAdminAPIAdapter) Deprovision(ctx context.Context, lakeID string) err
 	uid := buildUID(lakeID)
 	bucketName := buildBucketName(lakeID)
 
-	if err := a.deleteBucketIfEmpty(ctx, bucketName); err != nil {
+	bucketClient := a.s3Client
+	user, err := a.getUser(ctx, uid)
+	if err == nil {
+		if len(user.Keys) > 0 {
+			bucketClient, err = a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
+			if err != nil {
+				return fmt.Errorf("init s3 client for user %s: %w", uid, err)
+			}
+		}
+	} else if !isAdminAPINotFound(err) {
+		return fmt.Errorf("get rgw user %s: %w", uid, err)
+	}
+
+	if err := a.deleteBucketIfEmpty(ctx, bucketClient, bucketName); err != nil {
 		return err
 	}
 
@@ -166,9 +173,9 @@ func (a *RGWAdminAPIAdapter) Deprovision(ctx context.Context, lakeID string) err
 	params.Set("uid", uid)
 	params.Set("purge-data", "true")
 	params.Set("purge-keys", "true")
-	_, err := a.adminRequest(ctx, http.MethodDelete, "/user", params, nil)
+	_, err = a.adminRequest(ctx, http.MethodDelete, "/user", params, nil)
 	if err != nil {
-		if apiErr, ok := err.(*adminAPIError); ok && apiErr.StatusCode == http.StatusNotFound {
+		if isAdminAPINotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("delete rgw user %s: %w", uid, err)
@@ -181,8 +188,7 @@ func (a *RGWAdminAPIAdapter) getOrCreateUser(ctx context.Context, uid, displayNa
 	if err == nil {
 		return user, nil
 	}
-	apiErr, ok := err.(*adminAPIError)
-	if !ok || apiErr.StatusCode != http.StatusNotFound {
+	if !isAdminAPINotFound(err) {
 		return rgwUserResponse{}, err
 	}
 
@@ -229,13 +235,13 @@ func (a *RGWAdminAPIAdapter) createS3Key(ctx context.Context, uid string) error 
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) ensureBucket(ctx context.Context, bucketName string) error {
-	_, err := a.s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &bucketName})
+func (a *RGWAdminAPIAdapter) ensureBucket(ctx context.Context, s3Client *s3.Client, bucketName string) error {
+	_, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: &bucketName})
 	if err == nil {
 		return nil
 	}
 
-	_, createErr := a.s3Client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &bucketName})
+	_, createErr := s3Client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &bucketName})
 	if createErr != nil {
 		msg := strings.ToLower(createErr.Error())
 		if strings.Contains(msg, "bucketalreadyownedbyyou") || strings.Contains(msg, "bucket already exists") {
@@ -246,8 +252,8 @@ func (a *RGWAdminAPIAdapter) ensureBucket(ctx context.Context, bucketName string
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) deleteBucketIfEmpty(ctx context.Context, bucketName string) error {
-	objects, err := a.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucketName, MaxKeys: aws.Int32(1)})
+func (a *RGWAdminAPIAdapter) deleteBucketIfEmpty(ctx context.Context, s3Client *s3.Client, bucketName string) error {
+	objects, err := s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: &bucketName, MaxKeys: aws.Int32(1)})
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "nosuchbucket") {
@@ -259,7 +265,7 @@ func (a *RGWAdminAPIAdapter) deleteBucketIfEmpty(ctx context.Context, bucketName
 		return fmt.Errorf("bucket %s is not empty", bucketName)
 	}
 
-	_, err = a.s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucketName})
+	_, err = s3Client.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &bucketName})
 	if err != nil {
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "nosuchbucket") {
@@ -268,6 +274,33 @@ func (a *RGWAdminAPIAdapter) deleteBucketIfEmpty(ctx context.Context, bucketName
 		return fmt.Errorf("delete bucket %s: %w", bucketName, err)
 	}
 	return nil
+}
+
+func (a *RGWAdminAPIAdapter) newS3Client(ctx context.Context, accessKeyID, secretAccessKey string) (*s3.Client, error) {
+	staticCreds := credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")
+	awsCfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion(a.Region),
+		config.WithCredentialsProvider(staticCreds),
+		config.WithHTTPClient(a.httpClient),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(func(service, _ string, _ ...interface{}) (aws.Endpoint, error) {
+			if service == s3.ServiceID {
+				return aws.Endpoint{URL: a.Endpoint, SigningRegion: a.Region, HostnameImmutable: true}, nil
+			}
+			return aws.Endpoint{}, &aws.EndpointNotFoundError{}
+		})),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load aws config: %w", err)
+	}
+
+	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		o.UsePathStyle = true
+	}), nil
+}
+
+func isAdminAPINotFound(err error) bool {
+	apiErr, ok := err.(*adminAPIError)
+	return ok && apiErr.StatusCode == http.StatusNotFound
 }
 
 func (a *RGWAdminAPIAdapter) setUserQuota(ctx context.Context, uid string, sizeGiB int64) error {

@@ -14,6 +14,11 @@ type Config struct {
 
 	InternalToken string
 
+	WorkerEnabled      bool
+	WorkerPollInterval time.Duration
+	WorkerStaleAfter   time.Duration
+	WorkerMaxAttempts  int
+
 	RGWEndpoint           string
 	RGWAdminPath          string
 	RGWRegion             string
@@ -28,6 +33,10 @@ func Load() Config {
 		ReadHeaderTimeout:     time.Duration(getEnvInt("READ_HEADER_TIMEOUT_SECONDS", 5)) * time.Second,
 		DatabaseURL:           getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/datalake?sslmode=disable"),
 		InternalToken:         getEnv("INTERNAL_TOKEN", "change-me"),
+		WorkerEnabled:         getEnvBool("WORKER_ENABLED", true),
+		WorkerPollInterval:    time.Duration(getEnvInt("WORKER_POLL_INTERVAL_SECONDS", 2)) * time.Second,
+		WorkerStaleAfter:      time.Duration(getEnvInt("WORKER_STALE_AFTER_SECONDS", 120)) * time.Second,
+		WorkerMaxAttempts:     getEnvInt("WORKER_MAX_ATTEMPTS", 3),
 		RGWEndpoint:           getEnv("RGW_ENDPOINT", "http://localhost:8080"),
 		RGWAdminPath:          getEnv("RGW_ADMIN_PATH", "/admin"),
 		RGWRegion:             getEnv("RGW_REGION", "us-east-1"),

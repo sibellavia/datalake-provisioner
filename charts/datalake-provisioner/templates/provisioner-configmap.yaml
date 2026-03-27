@@ -7,6 +7,10 @@ metadata:
 data:
   HTTP_PORT: {{ .Values.provisioner.httpPort | quote }}
   READ_HEADER_TIMEOUT_SECONDS: {{ .Values.provisioner.readHeaderTimeoutSeconds | quote }}
+  WORKER_ENABLED: {{ .Values.provisioner.workerEnabled | quote }}
+  WORKER_POLL_INTERVAL_SECONDS: {{ .Values.provisioner.workerPollIntervalSeconds | quote }}
+  WORKER_STALE_AFTER_SECONDS: {{ .Values.provisioner.workerStaleAfterSeconds | quote }}
+  WORKER_MAX_ATTEMPTS: {{ .Values.provisioner.workerMaxAttempts | quote }}
 
   RGW_ENDPOINT: {{ .Values.provisioner.rgwEndpoint | quote }}
   RGW_ADMIN_PATH: {{ .Values.provisioner.rgwAdminPath | quote }}

@@ -9,7 +9,7 @@ This service currently focuses on Ceph provisioning lifecycle (user, bucket, quo
 Implemented:
 - Go API service with Chi
 - PostgreSQL persistence for lakes/operations
-- Async provisioning workflow
+- Durable background operation runner backed by PostgreSQL
 - Ceph **RGW Admin Ops API** adapter (no CLI dependency)
 - OpenAPI contract (`api/openapi.yaml`)
 
@@ -52,6 +52,10 @@ datalake-provisioner/
 - `READ_HEADER_TIMEOUT_SECONDS` (default: `5`)
 - `DATABASE_URL` (default local postgres URL)
 - `INTERNAL_TOKEN` (required in real deployments)
+- `WORKER_ENABLED` (default: `true`)
+- `WORKER_POLL_INTERVAL_SECONDS` (default: `2`)
+- `WORKER_STALE_AFTER_SECONDS` (default: `120`)
+- `WORKER_MAX_ATTEMPTS` (default: `3`)
 
 ### Ceph RGW Admin API
 - `RGW_ENDPOINT` (e.g. `http://rook-ceph-rgw...:8080`)
@@ -68,7 +72,7 @@ datalake-provisioner/
 ## Provision flow (implemented)
 1. `POST /v1/lakes`
 2. create lake row (`provisioning`) + operation row (`pending`)
-3. async worker starts:
+3. background worker picks up the pending operation from PostgreSQL:
    - mark operation `running`
    - Ceph: get/create user
    - Ceph: ensure S3 key
@@ -76,7 +80,7 @@ datalake-provisioner/
    - Ceph: set/enable user quota
    - mark lake `ready`
    - mark operation `success`
-4. on errors: mark lake `failed`, operation `failed`
+4. on errors: operation is retried up to `WORKER_MAX_ATTEMPTS`, then lake and operation are marked `failed`
 
 ## End-to-end workflow (lab validated)
 1. User (or Movincloud) requests provisioning with `tenant`, `userId`, `sizeGiB`.

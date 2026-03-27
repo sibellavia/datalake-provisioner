@@ -34,11 +34,14 @@ spec:
                 echo "waiting for postgres..."
                 sleep 2
               done
-              psql -h {{ include "datalake-provisioner.fullname" . }}-postgres \
-                -U {{ .Values.postgres.user }} \
-                -d {{ .Values.postgres.db }} \
-                -v ON_ERROR_STOP=1 \
-                -f /migrations/0001_init.up.sql
+              for f in /migrations/*.up.sql; do
+                echo "applying $f"
+                psql -h {{ include "datalake-provisioner.fullname" . }}-postgres \
+                  -U {{ .Values.postgres.user }} \
+                  -d {{ .Values.postgres.db }} \
+                  -v ON_ERROR_STOP=1 \
+                  -f "$f"
+              done
           volumeMounts:
             - name: migrations
               mountPath: /migrations

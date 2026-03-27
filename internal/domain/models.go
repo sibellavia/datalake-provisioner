@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type LakeStatus string
 
@@ -37,12 +40,17 @@ type Lake struct {
 }
 
 type Operation struct {
-	OperationID   string          `json:"operationId"`
-	OperationType string          `json:"operationType"`
-	LakeID        string          `json:"lakeId,omitempty"`
-	TenantID      string          `json:"tenantId"`
-	Status        OperationStatus `json:"status"`
-	ErrorMessage  string          `json:"errorMessage,omitempty"`
-	StartedAt     time.Time       `json:"startedAt"`
-	EndedAt       *time.Time      `json:"endedAt,omitempty"`
+	OperationID    string          `json:"operationId"`
+	OperationType  string          `json:"operationType"`
+	LakeID         string          `json:"lakeId,omitempty"`
+	TenantID       string          `json:"tenantId"`
+	Status         OperationStatus `json:"status"`
+	ErrorMessage   string          `json:"errorMessage,omitempty"`
+	StartedAt      time.Time       `json:"startedAt"`
+	EndedAt        *time.Time      `json:"endedAt,omitempty"`
+	RequestPayload json.RawMessage `json:"-"`
+	AttemptCount   int             `json:"-"`
+	NextAttemptAt  time.Time       `json:"-"`
+	UpdatedAt      time.Time       `json:"-"`
+	ErrorCode      string          `json:"-"`
 }

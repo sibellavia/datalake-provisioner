@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: datalake-migrate-0001
+  name: datalake-migrate-0002
   namespace: datalake
 spec:
   backoffLimit: 3
@@ -22,7 +22,10 @@ spec:
             - sh
             - -c
             - |
-              psql -h postgres -U postgres -d datalake -v ON_ERROR_STOP=1 -f /migrations/0001_init.up.sql
+              for f in /migrations/*.up.sql; do
+                echo "applying $f"
+                psql -h postgres -U postgres -d datalake -v ON_ERROR_STOP=1 -f "$f"
+              done
           volumeMounts:
             - name: migrations
               mountPath: /migrations

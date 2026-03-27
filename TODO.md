@@ -58,18 +58,29 @@ These items should be completed before exposing multi-bucket APIs.
 
 ---
 
-#### 2. Replace in-process goroutines with a DB-backed operation queue
+#### 2. Replace in-process goroutines with a minimal durable operation runner
 **Why:** current async operations are started with goroutines inside the API process, so restarts can strand work.
 
-- [ ] Add durable operation execution model in Postgres
-- [ ] Add worker process / worker loop to claim runnable operations
-- [ ] Add leases / heartbeats / lease expiry recovery
-- [ ] Add retry scheduling with backoff
+- [x] Add durable operation execution model in Postgres
+- [x] Add worker process / worker loop to claim runnable operations
+- [x] Store request payload on operations so work can be replayed from DB state
+- [x] Add retry scheduling with backoff
+- [x] Add single-worker leadership via Postgres advisory lock
+- [x] Add stale `running` operation reset back to `pending`
 - [ ] Ensure crashed or interrupted operations can be resumed or failed safely
+
+**Validation completed so far**
+- Live deployment on `lks` successfully ran the new durable runner version.
+- Worker leadership was acquired via Postgres advisory lock.
+- A newly created lake operation was claimed from PostgreSQL and completed successfully.
+- The resulting lake was then validated end-to-end with direct object upload and Ceph-side usage/accounting checks.
+
+**Validation still pending**
+- Explicit restart-recovery test while an operation is in-flight.
 
 **Done when**
 - Pod restart during provisioning does not lose the operation
-- Stuck `running` operations can be recovered automatically
+- Stale `running` operations are recovered automatically
 - At-least-once execution is safe with idempotent handling
 
 ---
@@ -282,7 +293,7 @@ These features make the service feel more like a complete managed object storage
 ## Suggested PR sequence
 
 1. [x] **PR-1**: Fix bucket ownership
-2. [ ] **PR-2**: DB-backed operation queue + worker
+2. [ ] **PR-2**: Minimal durable operation runner (implemented, restart-recovery validation pending)
 3. [ ] **PR-3**: Idempotency + typed errors / API correctness
 4. [ ] **PR-4**: State machine / concurrency guards
 5. [ ] **PR-5**: Multi-bucket schema / domain model

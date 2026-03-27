@@ -46,6 +46,10 @@ securityContext:
 provisioner:
   httpPort: "8081"
   readHeaderTimeoutSeconds: "5"
+  workerEnabled: "true"
+  workerPollIntervalSeconds: "2"
+  workerStaleAfterSeconds: "120"
+  workerMaxAttempts: "3"
 
   internalToken: "change-me"
 

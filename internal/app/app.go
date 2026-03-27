@@ -12,6 +12,7 @@ import (
 	"github.com/movincloud/datalake-provisioner/internal/http/handlers"
 	"github.com/movincloud/datalake-provisioner/internal/service"
 	"github.com/movincloud/datalake-provisioner/internal/store/postgres"
+	"github.com/movincloud/datalake-provisioner/internal/worker"
 )
 
 type App struct {
@@ -56,6 +57,17 @@ func New(ctx context.Context) (*App, error) {
 		LakesHandler:  lakesHandler,
 		OpsHandler:    opsHandler,
 	})
+
+	if cfg.WorkerEnabled {
+		runner := &worker.Runner{
+			DB:           db,
+			Service:      prov,
+			PollInterval: cfg.WorkerPollInterval,
+			StaleAfter:   cfg.WorkerStaleAfter,
+			MaxAttempts:  cfg.WorkerMaxAttempts,
+		}
+		go runner.Run(ctx)
+	}
 
 	return &App{Config: cfg, Router: router, DB: db}, nil
 }

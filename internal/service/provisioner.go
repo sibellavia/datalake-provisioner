@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -23,7 +25,9 @@ type Repository interface {
 
 	CreateOperation(ctx context.Context, op domain.Operation) error
 	GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error)
-	MarkOperationRunning(ctx context.Context, operationID, tenantID string) error
+	ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error)
+	RequeueOperation(ctx context.Context, operationID, tenantID, errorMessage string, nextAttemptAt time.Time) error
+	ResetStaleRunningOperations(ctx context.Context, staleBefore time.Time) (int64, error)
 	MarkOperationSuccess(ctx context.Context, operationID, tenantID string) error
 	MarkOperationFailed(ctx context.Context, operationID, tenantID, errorMessage string) error
 }
@@ -67,19 +71,32 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		return domain.Operation{}, fmt.Errorf("create lake: %w", err)
 	}
 
+	payload, err := marshalOperationPayload(operationPayload{
+		Type:     "provision",
+		TenantID: req.TenantID,
+		LakeID:   lakeID,
+		UserID:   req.UserID,
+		SizeGiB:  req.SizeGiB,
+	})
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("marshal provision payload: %w", err)
+	}
+
 	op := domain.Operation{
-		OperationID:   uuid.NewString(),
-		OperationType: "provision",
-		LakeID:        lakeID,
-		TenantID:      req.TenantID,
-		Status:        domain.OperationPending,
-		StartedAt:     now,
+		OperationID:    uuid.NewString(),
+		OperationType:  "provision",
+		LakeID:         lakeID,
+		TenantID:       req.TenantID,
+		Status:         domain.OperationPending,
+		StartedAt:      now,
+		RequestPayload: payload,
+		NextAttemptAt:  now,
+		UpdatedAt:      now,
 	}
 	if err := s.Repo.CreateOperation(ctx, op); err != nil {
 		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
 	}
 
-	go s.runProvision(context.Background(), op.OperationID, req, lakeID)
 	return op, nil
 }
 
@@ -89,19 +106,31 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domai
 	}
 
 	now := time.Now().UTC()
+	payload, err := marshalOperationPayload(operationPayload{
+		Type:     "resize",
+		TenantID: req.TenantID,
+		LakeID:   req.LakeID,
+		SizeGiB:  req.SizeGiB,
+	})
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("marshal resize payload: %w", err)
+	}
+
 	op := domain.Operation{
-		OperationID:   uuid.NewString(),
-		OperationType: "resize",
-		LakeID:        req.LakeID,
-		TenantID:      req.TenantID,
-		Status:        domain.OperationPending,
-		StartedAt:     now,
+		OperationID:    uuid.NewString(),
+		OperationType:  "resize",
+		LakeID:         req.LakeID,
+		TenantID:       req.TenantID,
+		Status:         domain.OperationPending,
+		StartedAt:      now,
+		RequestPayload: payload,
+		NextAttemptAt:  now,
+		UpdatedAt:      now,
 	}
 	if err := s.Repo.CreateOperation(ctx, op); err != nil {
 		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
 	}
 
-	go s.runResize(context.Background(), op.OperationID, req)
 	return op, nil
 }
 
@@ -111,110 +140,173 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 	}
 
 	now := time.Now().UTC()
+	payload, err := marshalOperationPayload(operationPayload{
+		Type:     "deprovision",
+		TenantID: req.TenantID,
+		LakeID:   req.LakeID,
+	})
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("marshal deprovision payload: %w", err)
+	}
+
 	op := domain.Operation{
-		OperationID:   uuid.NewString(),
-		OperationType: "deprovision",
-		LakeID:        req.LakeID,
-		TenantID:      req.TenantID,
-		Status:        domain.OperationPending,
-		StartedAt:     now,
+		OperationID:    uuid.NewString(),
+		OperationType:  "deprovision",
+		LakeID:         req.LakeID,
+		TenantID:       req.TenantID,
+		Status:         domain.OperationPending,
+		StartedAt:      now,
+		RequestPayload: payload,
+		NextAttemptAt:  now,
+		UpdatedAt:      now,
 	}
 	if err := s.Repo.CreateOperation(ctx, op); err != nil {
 		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
 	}
 
-	go s.runDeprovision(context.Background(), op.OperationID, req)
 	return op, nil
 }
 
-func (s *Provisioner) runProvision(ctx context.Context, operationID string, req ProvisionRequest, lakeID string) {
-	if err := s.Repo.MarkOperationRunning(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation running op=%s: %v", operationID, err)
+func (s *Provisioner) ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error) {
+	return s.Repo.ClaimNextRunnableOperation(ctx)
+}
+
+func (s *Provisioner) ResetStaleRunningOperations(ctx context.Context, staleBefore time.Time) (int64, error) {
+	return s.Repo.ResetStaleRunningOperations(ctx, staleBefore)
+}
+
+func (s *Provisioner) RequeueOperation(ctx context.Context, op domain.Operation, err error, nextAttemptAt time.Time) error {
+	errorMessage := fmt.Sprintf("operation attempt %d failed: %v", op.AttemptCount, err)
+	return s.Repo.RequeueOperation(ctx, op.OperationID, op.TenantID, errorMessage, nextAttemptAt)
+}
+
+func (s *Provisioner) MarkOperationExecutionFailed(ctx context.Context, op domain.Operation, err error) error {
+	errorMessage := err.Error()
+	log.Printf("operation failed op=%s lake=%s tenant=%s: %s", op.OperationID, op.LakeID, op.TenantID, errorMessage)
+
+	var joinErr error
+	if op.LakeID != "" {
+		if repoErr := s.Repo.MarkLakeFailed(ctx, op.LakeID, op.TenantID, errorMessage); repoErr != nil {
+			joinErr = errors.Join(joinErr, fmt.Errorf("mark lake failed: %w", repoErr))
+		}
+	}
+	if repoErr := s.Repo.MarkOperationFailed(ctx, op.OperationID, op.TenantID, errorMessage); repoErr != nil {
+		joinErr = errors.Join(joinErr, fmt.Errorf("mark operation failed: %w", repoErr))
+	}
+	return joinErr
+}
+
+func (s *Provisioner) ExecuteOperation(ctx context.Context, op domain.Operation) error {
+	var payload operationPayload
+	if len(op.RequestPayload) > 0 {
+		if err := json.Unmarshal(op.RequestPayload, &payload); err != nil {
+			return fmt.Errorf("unmarshal operation payload: %w", err)
+		}
+	}
+	if payload.Type == "" {
+		payload.Type = op.OperationType
+	}
+	if payload.TenantID == "" {
+		payload.TenantID = op.TenantID
+	}
+	if payload.LakeID == "" {
+		payload.LakeID = op.LakeID
 	}
 
+	switch op.OperationType {
+	case "provision":
+		return s.executeProvision(ctx, op, payload)
+	case "resize":
+		return s.executeResize(ctx, op, payload)
+	case "deprovision":
+		return s.executeDeprovision(ctx, op, payload)
+	default:
+		return fmt.Errorf("unsupported operation type %q", op.OperationType)
+	}
+}
+
+func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation, payload operationPayload) error {
 	if s.Ceph == nil {
-		s.failProvision(ctx, operationID, req.TenantID, lakeID, "ceph adapter not configured")
-		return
+		return fmt.Errorf("ceph adapter not configured")
+	}
+	if payload.LakeID == "" || payload.TenantID == "" || payload.UserID == "" || payload.SizeGiB <= 0 {
+		return fmt.Errorf("invalid provision payload")
 	}
 
 	cephOut, err := s.Ceph.Provision(ctx, ceph.ProvisionInput{
-		LakeID:   lakeID,
-		TenantID: req.TenantID,
-		UserID:   req.UserID,
-		SizeGiB:  req.SizeGiB,
+		LakeID:   payload.LakeID,
+		TenantID: payload.TenantID,
+		UserID:   payload.UserID,
+		SizeGiB:  payload.SizeGiB,
 	})
 	if err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, lakeID, fmt.Sprintf("ceph provision failed: %v", err))
-		return
+		return fmt.Errorf("ceph provision failed: %w", err)
 	}
 
-	if err := s.Repo.MarkLakeProvisioned(ctx, lakeID, req.TenantID, cephOut.RGWUser, cephOut.BucketName, ""); err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, lakeID, fmt.Sprintf("mark lake provisioned failed: %v", err))
-		return
+	if err := s.Repo.MarkLakeProvisioned(ctx, payload.LakeID, payload.TenantID, cephOut.RGWUser, cephOut.BucketName, ""); err != nil {
+		return fmt.Errorf("mark lake provisioned failed: %w", err)
 	}
 
-	if err := s.Repo.MarkOperationSuccess(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation success op=%s: %v", operationID, err)
-		return
+	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
+		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("provision completed op=%s lake=%s tenant=%s bucket=%s", operationID, lakeID, req.TenantID, cephOut.BucketName)
+	log.Printf("provision completed op=%s lake=%s tenant=%s bucket=%s", op.OperationID, payload.LakeID, payload.TenantID, cephOut.BucketName)
+	return nil
 }
 
-func (s *Provisioner) runResize(ctx context.Context, operationID string, req ResizeRequest) {
-	if err := s.Repo.MarkOperationRunning(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation running op=%s: %v", operationID, err)
+func (s *Provisioner) executeResize(ctx context.Context, op domain.Operation, payload operationPayload) error {
+	if s.Ceph == nil {
+		return fmt.Errorf("ceph adapter not configured")
 	}
-	if err := s.Repo.MarkLakeResizing(ctx, req.LakeID, req.TenantID); err != nil {
-		log.Printf("failed to mark lake resizing lake=%s: %v", req.LakeID, err)
-	}
-
-	if err := s.Ceph.Resize(ctx, req.LakeID, req.SizeGiB); err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, req.LakeID, fmt.Sprintf("ceph resize failed: %v", err))
-		return
+	if payload.LakeID == "" || payload.TenantID == "" || payload.SizeGiB <= 0 {
+		return fmt.Errorf("invalid resize payload")
 	}
 
-	if err := s.Repo.MarkLakeResized(ctx, req.LakeID, req.TenantID, req.SizeGiB); err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, req.LakeID, fmt.Sprintf("mark lake resized failed: %v", err))
-		return
+	if err := s.Repo.MarkLakeResizing(ctx, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark lake resizing failed: %w", err)
+	}
+	if err := s.Ceph.Resize(ctx, payload.LakeID, payload.SizeGiB); err != nil {
+		return fmt.Errorf("ceph resize failed: %w", err)
 	}
 
-	if err := s.Repo.MarkOperationSuccess(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation success op=%s: %v", operationID, err)
+	if err := s.Repo.MarkLakeResized(ctx, payload.LakeID, payload.TenantID, payload.SizeGiB); err != nil {
+		return fmt.Errorf("mark lake resized failed: %w", err)
 	}
+
+	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
+		return fmt.Errorf("mark operation success: %w", err)
+	}
+
+	log.Printf("resize completed op=%s lake=%s tenant=%s sizeGiB=%d", op.OperationID, payload.LakeID, payload.TenantID, payload.SizeGiB)
+	return nil
 }
 
-func (s *Provisioner) runDeprovision(ctx context.Context, operationID string, req DeprovisionRequest) {
-	if err := s.Repo.MarkOperationRunning(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation running op=%s: %v", operationID, err)
+func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operation, payload operationPayload) error {
+	if s.Ceph == nil {
+		return fmt.Errorf("ceph adapter not configured")
 	}
-	if err := s.Repo.MarkLakeDeleting(ctx, req.LakeID, req.TenantID); err != nil {
-		log.Printf("failed to mark lake deleting lake=%s: %v", req.LakeID, err)
-	}
-
-	if err := s.Ceph.Deprovision(ctx, req.LakeID); err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, req.LakeID, fmt.Sprintf("ceph deprovision failed: %v", err))
-		return
+	if payload.LakeID == "" || payload.TenantID == "" {
+		return fmt.Errorf("invalid deprovision payload")
 	}
 
-	if err := s.Repo.MarkLakeDeleted(ctx, req.LakeID, req.TenantID); err != nil {
-		s.failProvision(ctx, operationID, req.TenantID, req.LakeID, fmt.Sprintf("mark lake deleted failed: %v", err))
-		return
+	if err := s.Repo.MarkLakeDeleting(ctx, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark lake deleting failed: %w", err)
+	}
+	if err := s.Ceph.Deprovision(ctx, payload.LakeID); err != nil {
+		return fmt.Errorf("ceph deprovision failed: %w", err)
 	}
 
-	if err := s.Repo.MarkOperationSuccess(ctx, operationID, req.TenantID); err != nil {
-		log.Printf("failed to mark operation success op=%s: %v", operationID, err)
+	if err := s.Repo.MarkLakeDeleted(ctx, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark lake deleted failed: %w", err)
 	}
-}
 
-func (s *Provisioner) failProvision(ctx context.Context, operationID, tenantID, lakeID, errorMessage string) {
-	log.Printf("operation failed op=%s lake=%s tenant=%s: %s", operationID, lakeID, tenantID, errorMessage)
-	if err := s.Repo.MarkLakeFailed(ctx, lakeID, tenantID, errorMessage); err != nil {
-		log.Printf("failed to mark lake failed lake=%s: %v", lakeID, err)
+	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
+		return fmt.Errorf("mark operation success: %w", err)
 	}
-	if err := s.Repo.MarkOperationFailed(ctx, operationID, tenantID, errorMessage); err != nil {
-		log.Printf("failed to mark operation failed op=%s: %v", operationID, err)
-	}
+
+	log.Printf("deprovision completed op=%s lake=%s tenant=%s", op.OperationID, payload.LakeID, payload.TenantID)
+	return nil
 }
 
 func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {

@@ -24,7 +24,6 @@ Helm chart (k3s lab):
 - `charts/datalake-provisioner`
 
 Not implemented yet:
-- idempotency key handling
 - Kubernetes deployment automation for UI/backend
 
 ## Project structure
@@ -68,6 +67,7 @@ datalake-provisioner/
 ## API security (MVP)
 - `X-Internal-Token`: shared internal token
 - `X-Tenant`: tenant context header
+- `Idempotency-Key`: optional header supported on create/resize/delete operations
 
 ## Provision flow (implemented)
 1. `POST /v1/lakes`

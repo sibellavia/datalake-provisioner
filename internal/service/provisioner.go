@@ -24,6 +24,8 @@ type Repository interface {
 	MarkLakeFailed(ctx context.Context, lakeID, tenantID, errorMessage string) error
 
 	CreateOperation(ctx context.Context, op domain.Operation) error
+	StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
+	StartOperation(ctx context.Context, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error)
 	ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error)
 	RequeueOperation(ctx context.Context, operationID, tenantID, errorMessage string, nextAttemptAt time.Time) error
@@ -38,25 +40,33 @@ type Provisioner struct {
 }
 
 type ProvisionRequest struct {
-	TenantID string
-	UserID   string
-	SizeGiB  int64
+	TenantID       string
+	UserID         string
+	SizeGiB        int64
+	IdempotencyKey string
 }
 
 type ResizeRequest struct {
-	TenantID string
-	LakeID   string
-	SizeGiB  int64
+	TenantID       string
+	LakeID         string
+	SizeGiB        int64
+	IdempotencyKey string
 }
 
 type DeprovisionRequest struct {
-	TenantID string
-	LakeID   string
+	TenantID       string
+	LakeID         string
+	IdempotencyKey string
 }
 
 func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) (domain.Operation, error) {
 	now := time.Now().UTC()
 	lakeID := uuid.NewString()
+
+	requestHash, err := hashProvisionRequest(req)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("hash provision request: %w", err)
+	}
 
 	lake := domain.Lake{
 		LakeID:           lakeID,
@@ -66,9 +76,6 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		Status:           domain.LakeStatusProvisioning,
 		CreatedAt:        now,
 		UpdatedAt:        now,
-	}
-	if err := s.Repo.CreateLake(ctx, lake); err != nil {
-		return domain.Operation{}, fmt.Errorf("create lake: %w", err)
 	}
 
 	payload, err := marshalOperationPayload(operationPayload{
@@ -93,11 +100,13 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
-	if err := s.Repo.CreateOperation(ctx, op); err != nil {
-		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
+
+	storedOp, err := s.Repo.StartProvisionOperation(ctx, lake, op, req.IdempotencyKey, requestHash)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("start provision operation: %w", err)
 	}
 
-	return op, nil
+	return storedOp, nil
 }
 
 func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domain.Operation, error) {
@@ -106,6 +115,11 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domai
 	}
 
 	now := time.Now().UTC()
+	requestHash, err := hashResizeRequest(req)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("hash resize request: %w", err)
+	}
+
 	payload, err := marshalOperationPayload(operationPayload{
 		Type:     "resize",
 		TenantID: req.TenantID,
@@ -127,11 +141,13 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domai
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
-	if err := s.Repo.CreateOperation(ctx, op); err != nil {
-		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
+
+	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("start resize operation: %w", err)
 	}
 
-	return op, nil
+	return storedOp, nil
 }
 
 func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionRequest) (domain.Operation, error) {
@@ -140,6 +156,11 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 	}
 
 	now := time.Now().UTC()
+	requestHash, err := hashDeprovisionRequest(req)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("hash deprovision request: %w", err)
+	}
+
 	payload, err := marshalOperationPayload(operationPayload{
 		Type:     "deprovision",
 		TenantID: req.TenantID,
@@ -160,11 +181,13 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
-	if err := s.Repo.CreateOperation(ctx, op); err != nil {
-		return domain.Operation{}, fmt.Errorf("create operation: %w", err)
+
+	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("start deprovision operation: %w", err)
 	}
 
-	return op, nil
+	return storedOp, nil
 }
 
 func (s *Provisioner) ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error) {

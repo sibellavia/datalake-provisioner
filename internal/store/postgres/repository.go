@@ -6,9 +6,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/movincloud/datalake-provisioner/internal/domain"
 )
+
+type execer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
 
 type Repository struct {
 	DB *pgxpool.Pool
@@ -19,11 +24,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 }
 
 func (r *Repository) CreateLake(ctx context.Context, lake domain.Lake) error {
-	_, err := r.DB.Exec(ctx, `
-		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, url, rgw_user, bucket_name, last_error, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-	`, lake.LakeID, lake.TenantID, lake.UserID, lake.RequestedSizeGiB, lake.Status, nullable(lake.URL), nullable(lake.RGWUser), nullable(lake.BucketName), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
-	return err
+	return r.insertLake(ctx, r.DB, lake)
 }
 
 func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error) {
@@ -103,11 +104,80 @@ func (r *Repository) MarkLakeFailed(ctx context.Context, lakeID, tenantID, error
 }
 
 func (r *Repository) CreateOperation(ctx context.Context, op domain.Operation) error {
-	_, err := r.DB.Exec(ctx, `
-		INSERT INTO operations (operation_id, operation_type, lake_id, tenant_id, status, error_message, started_at, ended_at, request_payload, attempt_count, next_attempt_at, updated_at, error_code)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-	`, op.OperationID, op.OperationType, nullable(op.LakeID), op.TenantID, op.Status, nullable(op.ErrorMessage), op.StartedAt, op.EndedAt, op.RequestPayload, op.AttemptCount, op.NextAttemptAt, op.UpdatedAt, nullable(op.ErrorCode))
-	return err
+	return r.insertOperation(ctx, r.DB, op)
+}
+
+func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {
+	if idempotencyKey != "" {
+		existingOp, found, err := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+		if err != nil || found {
+			return existingOp, err
+		}
+	}
+
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		if err := r.insertLake(ctx, tx, lake); err != nil {
+			return err
+		}
+		if err := r.insertOperation(ctx, tx, op); err != nil {
+			return err
+		}
+		if idempotencyKey != "" {
+			if err := r.insertIdempotencyKey(ctx, tx, op.TenantID, idempotencyKey, op.OperationID, op.OperationType, requestHash); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if idempotencyKey != "" && isUniqueViolation(err) {
+			existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+			if getErr != nil {
+				return domain.Operation{}, getErr
+			}
+			if found {
+				return existingOp, nil
+			}
+		}
+		return domain.Operation{}, err
+	}
+
+	return op, nil
+}
+
+func (r *Repository) StartOperation(ctx context.Context, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {
+	if idempotencyKey != "" {
+		existingOp, found, err := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+		if err != nil || found {
+			return existingOp, err
+		}
+	}
+
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		if err := r.insertOperation(ctx, tx, op); err != nil {
+			return err
+		}
+		if idempotencyKey != "" {
+			if err := r.insertIdempotencyKey(ctx, tx, op.TenantID, idempotencyKey, op.OperationID, op.OperationType, requestHash); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if idempotencyKey != "" && isUniqueViolation(err) {
+			existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+			if getErr != nil {
+				return domain.Operation{}, getErr
+			}
+			if found {
+				return existingOp, nil
+			}
+		}
+		return domain.Operation{}, err
+	}
+
+	return op, nil
 }
 
 func (r *Repository) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {
@@ -218,6 +288,75 @@ func (r *Repository) MarkOperationFailed(ctx context.Context, operationID, tenan
 		WHERE operation_id = $1 AND tenant_id = $2
 	`, operationID, tenantID, errorMessage)
 	return err
+}
+
+func (r *Repository) insertLake(ctx context.Context, exec execer, lake domain.Lake) error {
+	_, err := exec.Exec(ctx, `
+		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, url, rgw_user, bucket_name, last_error, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+	`, lake.LakeID, lake.TenantID, lake.UserID, lake.RequestedSizeGiB, lake.Status, nullable(lake.URL), nullable(lake.RGWUser), nullable(lake.BucketName), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
+	return err
+}
+
+func (r *Repository) insertOperation(ctx context.Context, exec execer, op domain.Operation) error {
+	_, err := exec.Exec(ctx, `
+		INSERT INTO operations (operation_id, operation_type, lake_id, tenant_id, status, error_message, started_at, ended_at, request_payload, attempt_count, next_attempt_at, updated_at, error_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+	`, op.OperationID, op.OperationType, nullable(op.LakeID), op.TenantID, op.Status, nullable(op.ErrorMessage), op.StartedAt, op.EndedAt, op.RequestPayload, op.AttemptCount, op.NextAttemptAt, op.UpdatedAt, nullable(op.ErrorCode))
+	return err
+}
+
+func (r *Repository) insertIdempotencyKey(ctx context.Context, exec execer, tenantID, idempotencyKey, operationID, operationType, requestHash string) error {
+	_, err := exec.Exec(ctx, `
+		INSERT INTO idempotency_keys (tenant_id, idempotency_key, operation_id, created_at, operation_type, request_hash)
+		VALUES ($1,$2,$3,NOW(),$4,$5)
+	`, tenantID, idempotencyKey, operationID, operationType, requestHash)
+	return err
+}
+
+func (r *Repository) getIdempotentOperation(ctx context.Context, tenantID, idempotencyKey, requestHash string) (domain.Operation, bool, error) {
+	var operationID string
+	var storedHash string
+	err := r.DB.QueryRow(ctx, `
+		SELECT operation_id::text, COALESCE(request_hash, '')
+		FROM idempotency_keys
+		WHERE tenant_id = $1 AND idempotency_key = $2
+	`, tenantID, idempotencyKey).Scan(&operationID, &storedHash)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Operation{}, false, nil
+		}
+		return domain.Operation{}, false, err
+	}
+	if storedHash != requestHash {
+		return domain.Operation{}, false, domain.ErrIdempotencyMismatch
+	}
+
+	op, err := r.GetOperation(ctx, operationID, tenantID)
+	if err != nil {
+		return domain.Operation{}, false, err
+	}
+	return op, true, nil
+}
+
+func (r *Repository) withTx(ctx context.Context, fn func(tx pgx.Tx) error) error {
+	tx, err := r.DB.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func nullable(s string) interface{} {

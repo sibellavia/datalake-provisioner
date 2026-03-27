@@ -12,6 +12,11 @@ This file captures the recommended implementation order to evolve `datalake-prov
   - **1 lake = 1 RGW user/account**
   - **1 lake quota = 1 RGW user quota**
   - **N buckets per lake**
+- For the clean design, a new lake should be provisioned as an **empty boundary**:
+  - quota + credentials
+  - **zero buckets by default**
+- No backward-compatibility constraints are required yet because the service is not in use.
+- First multi-bucket version should keep **one lake-wide credential pair**.
 - The provider view must support both:
   - **per-lake usage**
   - **global usage across all lakes**
@@ -133,57 +138,106 @@ These items should be completed before exposing multi-bucket APIs.
 
 ---
 
-### P1 — core product evolution: real multi-bucket lake model
+### P1 — core product evolution: clean multi-bucket lake model
 Do this immediately after P0 is in place.
 
-#### 5. Introduce lake + buckets domain model
+**Architectural decisions for P1**
+- We do **not** need backward compatibility or migration shims for legacy consumers.
+- A newly created lake should start **empty**.
+- `POST /v1/lakes` provisions the **lake boundary** only:
+  - RGW user/account
+  - lake-wide quota
+  - lake-wide credentials
+  - zero buckets by default
+- Buckets are explicit child resources created later.
+- Keep **one lake-wide credential pair** for the first version.
+- Keep **lake quota = RGW user quota**.
+- Keep **one active operation per lake** for now, even for bucket operations.
+- Per-lake aggregate usage should come from **RGW user stats**.
+- Per-bucket usage should come from **bucket stats**.
+- Global total usage should be computed across all lakes.
+- Lake deletion should remain conservative:
+  - bucket delete only if bucket is empty
+  - lake delete only when no active/non-deleted buckets remain
+
+#### 5. Introduce a clean lake + bucket schema
 **Target model**
 - 1 lake = 1 RGW user/account
-- 1 lake quota = RGW user quota
-- N buckets under that lake
+- 1 lake quota = 1 RGW user quota
+- 1 lake = 0..N buckets
 
-- [ ] Add `buckets` table and associated repository/service methods
-- [ ] Remove single-bucket assumption from the `lakes` domain model
-- [ ] Keep backward compatibility for existing single-bucket lakes
-- [ ] Decide whether lake creation auto-creates a default bucket
+- [ ] Add a first-class `buckets` table
+- [ ] Make `lakes` represent only the lake boundary, not a single bucket
+- [ ] Remove the single-bucket assumption from domain models, services, and adapter logic
+- [ ] Add bucket statuses (`creating`, `ready`, `deleting`, `failed`, `deleted`)
+- [ ] Store both:
+  - logical bucket name inside the lake (e.g. `raw`, `bronze`)
+  - physical globally unique `bucket_name`
+- [ ] Define the bucket naming strategy for physical S3 bucket names
 
 **Done when**
-- The service no longer models a lake as exactly one bucket
+- A lake is modeled as an empty boundary with quota and credentials
+- Buckets are first-class child resources in the schema
+- The service no longer assumes one bucket per lake anywhere in the core model
 
 ---
 
-#### 6. Add bucket lifecycle APIs
-- [ ] `POST /v1/lakes/{lakeId}/buckets`
-- [ ] `GET /v1/lakes/{lakeId}/buckets`
-- [ ] `GET /v1/lakes/{lakeId}/buckets/{bucketId}`
-- [ ] `DELETE /v1/lakes/{lakeId}/buckets/{bucketId}`
-- [ ] Idempotency + state handling for bucket operations
+#### 6. Refactor the RGW adapter for explicit lake vs bucket operations
+**Why:** the current adapter still assumes one bucket derived from `lakeId`.
+
+- [ ] Split lake/account operations from bucket operations
+- [ ] Add explicit methods for:
+  - ensuring lake user/account
+  - ensuring lake keys
+  - setting lake quota
+  - creating bucket for a lake user
+  - deleting bucket if empty
+  - querying user usage
+  - querying bucket usage
+- [ ] Remove implicit `buildBucketName(lakeID)` assumptions from the main provisioning path
+- [ ] Keep AWS S3 SDK for S3 data-plane bucket operations
 
 **Done when**
-- A lake can contain multiple buckets managed through the control-plane
+- The adapter can manage a lake with zero or many buckets
+- Bucket operations are explicit and no longer derived from a one-bucket lake assumption
 
 ---
 
-#### 7. Aggregate usage at lake level and expose fleet-wide totals
-**Why:** once a lake can contain multiple buckets, usage must be visible both per lake and across all lakes.
+#### 7. Add bucket lifecycle APIs and operations
+- [ ] Add `POST /v1/lakes/{lakeId}/buckets`
+- [ ] Add `GET /v1/lakes/{lakeId}/buckets`
+- [ ] Add `GET /v1/lakes/{lakeId}/buckets/{bucketId}`
+- [ ] Add `DELETE /v1/lakes/{lakeId}/buckets/{bucketId}`
+- [ ] Add worker operation types for bucket create/delete
+- [ ] Apply idempotency and conflict/state rules to bucket mutations
 
-- [ ] Sum bucket usage into lake usage
-- [ ] Expose **per-lake total usage** across all buckets in that lake
+**Done when**
+- A lake can be provisioned empty
+- Buckets can be created and deleted explicitly through the control-plane
+- Bucket lifecycle runs through the same durable worker model
+
+---
+
+#### 8. Expose lake usage, bucket usage, and fleet-wide totals
+**Why:** once lakes can contain multiple buckets, the product must expose usage at the right boundaries.
+
+- [ ] Expose **per-lake total usage** from RGW user stats
+- [ ] Expose **per-bucket usage** from bucket stats
 - [ ] Expose **global total usage across all lakes**
-- [ ] Keep bucket count and per-bucket usage available
-- [ ] Keep **global committed quota across all lakes** as a first-class reporting requirement
+- [ ] Expose **global committed quota across all lakes**
+- [ ] Expose bucket count per lake
+- [ ] Define lake delete semantics around existing buckets
 
 **Done when**
-- One lake exposes total usage across all of its buckets
-- The service can show global total usage across all lakes
-- Provider/dashboard consumers can distinguish lake totals from bucket totals
+- Lake totals, bucket totals, and fleet totals are all available and clearly separated
+- The API models a lake as an empty boundary with explicit child buckets
 
 ---
 
 ### P2 — production hardening around the multi-bucket model
 These items should follow immediately after the core multi-bucket model exists.
 
-#### 8. Improve retries / timeouts / error classification
+#### 9. Improve retries / timeouts / error classification
 - [ ] Add per-operation timeout budget
 - [ ] Add Ceph / RGW request timeouts
 - [ ] Classify transient vs permanent errors
@@ -196,7 +250,7 @@ These items should follow immediately after the core multi-bucket model exists.
 
 ---
 
-#### 9. Add observability and readiness
+#### 10. Add observability and readiness
 - [ ] Add `/ready` endpoint that checks DB + RGW reachability
 - [ ] Keep `/health` as lightweight liveness endpoint
 - [ ] Switch to structured logging (`operationId`, `lakeId`, `bucketId`, `tenantId`, `siteId`, `attempt`)
@@ -209,7 +263,7 @@ These items should follow immediately after the core multi-bucket model exists.
 
 ---
 
-#### 10. Security hardening around Kong
+#### 11. Security hardening around Kong
 **Why:** Kong is the trusted entry point, so the service should be hardened around that deployment model instead of assuming open direct access.
 
 - [ ] Restrict service exposure so traffic comes from Kong / trusted network paths only
@@ -227,7 +281,7 @@ These items should follow immediately after the core multi-bucket model exists.
 
 ---
 
-#### 11. Improve deployment and multi-DC configuration
+#### 12. Improve deployment and multi-DC configuration
 - [ ] Add startup config validation
 - [ ] Add `SITE_ID` / `DC_ID` to config, logs, and metadata
 - [ ] Make external Postgres first-class in Helm
@@ -243,7 +297,7 @@ These items should follow immediately after the core multi-bucket model exists.
 ### P3 — provider reporting and reconciliation
 These items add the provider view needed to operate the service at scale.
 
-#### 12. Add usage / quota / capacity reporting
+#### 13. Add usage / quota / capacity reporting
 **Why:** the provider needs both per-lake and global visibility, plus capacity context from Ceph.
 
 - [ ] Add periodic sync job that reads RGW user stats and bucket stats
@@ -263,7 +317,7 @@ These items add the provider view needed to operate the service at scale.
 
 ---
 
-#### 13. Add reconciliation / drift detection
+#### 14. Add reconciliation / drift detection
 - [ ] Detect DB lakes missing in RGW
 - [ ] Detect RGW users/buckets not tracked in DB
 - [ ] Detect quota mismatches
@@ -278,7 +332,7 @@ These items add the provider view needed to operate the service at scale.
 ### P4 — richer product features
 These features make the service feel more like a complete managed object storage product.
 
-#### 14. Credentials lifecycle
+#### 15. Credentials lifecycle
 - [ ] Decide how credentials are returned to clients
 - [ ] Add credential rotation flow
 - [ ] Add revoke/regenerate support
@@ -286,7 +340,7 @@ These features make the service feel more like a complete managed object storage
 
 ---
 
-#### 15. Bucket features
+#### 16. Bucket features
 - [ ] Bucket versioning support
 - [ ] Lifecycle policy support
 - [ ] Tags / metadata
@@ -294,21 +348,21 @@ These features make the service feel more like a complete managed object storage
 
 ---
 
-#### 16. Deletion workflows
+#### 17. Deletion workflows
 - [ ] Define conservative delete vs force delete behavior
 - [ ] Handle non-empty buckets cleanly
 - [ ] Add purge options where product allows it
 
 ---
 
-#### 17. Access model evolution
+#### 18. Access model evolution
 - [ ] Evaluate bucket-scoped policies
 - [ ] Evaluate read-only / read-write service accounts
 - [ ] Keep lake-wide credentials as initial simple model
 
 ---
 
-#### 18. Evaluate `go-ceph/rgw/admin` to reduce custom Admin Ops code
+#### 19. Evaluate `go-ceph/rgw/admin` to reduce custom Admin Ops code
 **Why:** after the multi-bucket model is in place, we may be able to reduce some of our custom RGW Admin Ops implementation while keeping our internal adapter.
 
 - [ ] Evaluate replacing custom RGW Admin Ops request/signing code with `github.com/ceph/go-ceph/rgw/admin`
@@ -332,16 +386,17 @@ These features make the service feel more like a complete managed object storage
 2. [ ] **PR-2**: Minimal durable operation runner (implemented, restart-recovery validation pending)
 3. [x] **PR-3**: Idempotency + typed errors / API correctness
 4. [x] **PR-4**: State machine / concurrency guards
-5. [ ] **PR-5**: Multi-bucket schema / domain model
-6. [ ] **PR-6**: Bucket lifecycle APIs
-7. [ ] **PR-7**: Lake aggregated usage + fleet-wide totals
-8. [ ] **PR-8**: Retries / timeouts / error classification
-9. [ ] **PR-9**: Observability / readiness / metrics
-10. [ ] **PR-10**: Security hardening for Kong deployment model
-11. [ ] **PR-11**: Deployment + multi-DC configuration
-12. [ ] **PR-12**: Usage sync + capacity reporting
-13. [ ] **PR-13**: Reconciliation / drift detection
-14. [ ] **PR-14+**: Credentials, lifecycle, policies, richer product features
+5. [ ] **PR-5**: Clean multi-bucket schema / domain model (empty lake by default)
+6. [ ] **PR-6**: RGW adapter refactor for explicit lake vs bucket operations
+7. [ ] **PR-7**: Bucket lifecycle APIs + worker operations
+8. [ ] **PR-8**: Lake usage, bucket usage, and fleet-wide totals
+9. [ ] **PR-9**: Retries / timeouts / error classification
+10. [ ] **PR-10**: Observability / readiness / metrics
+11. [ ] **PR-11**: Security hardening for Kong deployment model
+12. [ ] **PR-12**: Deployment + multi-DC configuration
+13. [ ] **PR-13**: Usage sync + capacity reporting
+14. [ ] **PR-14**: Reconciliation / drift detection
+15. [ ] **PR-15+**: Credentials, lifecycle, policies, richer product features
 
 ---
 
@@ -361,8 +416,10 @@ The next major milestone is complete when all of the following are true:
 - [ ] Operations survive API pod restart
 - [x] Idempotent retries are safe
 - [x] Conflicting operations are prevented
-- [ ] One lake can contain multiple buckets
-- [ ] Per-lake usage is aggregated across all buckets in the lake
+- [ ] A lake is provisioned as an **empty boundary** (quota + credentials, zero buckets)
+- [ ] One lake can contain multiple explicit buckets
+- [ ] Per-lake usage is exposed from RGW user stats
+- [ ] Per-bucket usage is exposed from bucket stats
 - [ ] **Global total usage across all lakes** is available
 - [ ] Basic DB / RGW readiness is visible
 - [ ] Basic structured operation logs exist

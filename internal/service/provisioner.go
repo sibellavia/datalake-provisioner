@@ -103,15 +103,19 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 
 	storedOp, err := s.Repo.StartProvisionOperation(ctx, lake, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, fmt.Errorf("start provision operation: %w", err)
+		return domain.Operation{}, mapStartOperationError("start provision operation", err)
 	}
 
 	return storedOp, nil
 }
 
 func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domain.Operation, error) {
-	if _, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID); err != nil {
+	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
+	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady {
+		return domain.Operation{}, fmt.Errorf("%w: resize allowed only when lake is ready", domain.ErrInvalidState)
 	}
 
 	now := time.Now().UTC()
@@ -144,15 +148,19 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domai
 
 	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, fmt.Errorf("start resize operation: %w", err)
+		return domain.Operation{}, mapStartOperationError("start resize operation", err)
 	}
 
 	return storedOp, nil
 }
 
 func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionRequest) (domain.Operation, error) {
-	if _, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID); err != nil {
+	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
+	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady && lake.Status != domain.LakeStatusFailed {
+		return domain.Operation{}, fmt.Errorf("%w: deprovision allowed only when lake is ready or failed", domain.ErrInvalidState)
 	}
 
 	now := time.Now().UTC()
@@ -184,7 +192,7 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 
 	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, fmt.Errorf("start deprovision operation: %w", err)
+		return domain.Operation{}, mapStartOperationError("start deprovision operation", err)
 	}
 
 	return storedOp, nil
@@ -330,6 +338,13 @@ func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operatio
 
 	log.Printf("deprovision completed op=%s lake=%s tenant=%s", op.OperationID, payload.LakeID, payload.TenantID)
 	return nil
+}
+
+func mapStartOperationError(prefix string, err error) error {
+	if errors.Is(err, domain.ErrIdempotencyMismatch) || errors.Is(err, domain.ErrConflict) {
+		return fmt.Errorf("%s: %w", prefix, err)
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
 }
 
 func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {

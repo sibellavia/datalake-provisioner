@@ -54,6 +54,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /v1/lakes/{lakeId}:
     get:
@@ -86,6 +88,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Operation'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
 
@@ -110,6 +114,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Operation'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
 

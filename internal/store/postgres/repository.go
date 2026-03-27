@@ -130,14 +130,17 @@ func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.La
 		return nil
 	})
 	if err != nil {
-		if idempotencyKey != "" && isUniqueViolation(err) {
-			existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
-			if getErr != nil {
-				return domain.Operation{}, getErr
+		if isUniqueViolation(err) {
+			if idempotencyKey != "" {
+				existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+				if getErr != nil {
+					return domain.Operation{}, getErr
+				}
+				if found {
+					return existingOp, nil
+				}
 			}
-			if found {
-				return existingOp, nil
-			}
+			return domain.Operation{}, domain.ErrConflict
 		}
 		return domain.Operation{}, err
 	}
@@ -165,14 +168,17 @@ func (r *Repository) StartOperation(ctx context.Context, op domain.Operation, id
 		return nil
 	})
 	if err != nil {
-		if idempotencyKey != "" && isUniqueViolation(err) {
-			existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
-			if getErr != nil {
-				return domain.Operation{}, getErr
+		if isUniqueViolation(err) {
+			if idempotencyKey != "" {
+				existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+				if getErr != nil {
+					return domain.Operation{}, getErr
+				}
+				if found {
+					return existingOp, nil
+				}
 			}
-			if found {
-				return existingOp, nil
-			}
+			return domain.Operation{}, domain.ErrConflict
 		}
 		return domain.Operation{}, err
 	}

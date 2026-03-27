@@ -88,11 +88,16 @@ These items should be completed before exposing multi-bucket APIs.
 #### 3. Implement real idempotency
 **Why:** OpenAPI and schema already mention idempotency, but code does not enforce it.
 
-- [ ] Parse `Idempotency-Key` for create / resize / delete operations
-- [ ] Persist idempotency key + request hash + operation link
-- [ ] Return the existing operation for same key + same request
-- [ ] Return `409` for same key + different request
-- [ ] Add tests for retry behavior
+- [x] Parse `Idempotency-Key` for create / resize / delete operations
+- [x] Persist idempotency key + request hash + operation link
+- [x] Return the existing operation for same key + same request
+- [x] Return `409` for same key + different request
+- [x] Add live validation for retry behavior
+
+**Validation completed**
+- Live validation on `lks` confirmed correct idempotency behavior for provision, resize, and deprovision.
+- Same key + same request returned the same operation.
+- Same key + different request returned `409 Conflict`.
 
 **Done when**
 - Safe client retries are supported
@@ -101,13 +106,26 @@ These items should be completed before exposing multi-bucket APIs.
 ---
 
 #### 4. Add real operation state rules
-**Why:** the service needs explicit lifecycle guarantees before we expand the product model.
+**Why:** before multi-bucket, we still need a **minimal** state machine for the current lake lifecycle so that conflicting operations cannot corrupt state.
 
-- [ ] Define allowed lake state transitions
-- [ ] Define allowed operation transitions
-- [ ] Enforce one active operation per lake
-- [ ] Block invalid actions, e.g. resize on deleted lake, delete during conflicting operation
-- [ ] Return proper `404` / `409` / `400` instead of generic `500`
+**Minimum scope before multi-bucket**
+- [x] Define allowed lake state transitions for current operations (`provision`, `resize`, `deprovision`)
+- [x] Define allowed operation transitions for the current lifecycle
+- [x] Enforce one active operation per lake
+- [x] Block invalid actions, e.g. resize on deleted/provisioning lake, delete during conflicting operation
+- [x] Return proper `404` / `409` / `400` instead of generic `500`
+
+**Validation completed**
+- Live validation on `lks` confirmed:
+  - first resize request is accepted
+  - second concurrent resize is rejected with `409 Conflict`
+  - delete during active resize is rejected with `409 Conflict`
+  - delete is accepted once the lake is back in `ready`
+  - resize after delete is rejected with `409 Conflict`
+
+**Why we still needed it before multi-bucket**
+- Multi-bucket will add more mutating operations, so the current single-lake lifecycle must already reject conflicting actions deterministically.
+- Without this, adding bucket create/delete on top would compound concurrency and invalid-state problems.
 
 **Done when**
 - Invalid transitions are rejected deterministically
@@ -294,8 +312,8 @@ These features make the service feel more like a complete managed object storage
 
 1. [x] **PR-1**: Fix bucket ownership
 2. [ ] **PR-2**: Minimal durable operation runner (implemented, restart-recovery validation pending)
-3. [ ] **PR-3**: Idempotency + typed errors / API correctness
-4. [ ] **PR-4**: State machine / concurrency guards
+3. [x] **PR-3**: Idempotency + typed errors / API correctness
+4. [x] **PR-4**: State machine / concurrency guards
 5. [ ] **PR-5**: Multi-bucket schema / domain model
 6. [ ] **PR-6**: Bucket lifecycle APIs
 7. [ ] **PR-7**: Lake aggregated usage + fleet-wide totals
@@ -323,8 +341,8 @@ The next major milestone is complete when all of the following are true:
 
 - [x] Bucket owner is the lake RGW user
 - [ ] Operations survive API pod restart
-- [ ] Idempotent retries are safe
-- [ ] Conflicting operations are prevented
+- [x] Idempotent retries are safe
+- [x] Conflicting operations are prevented
 - [ ] One lake can contain multiple buckets
 - [ ] Per-lake usage is aggregated across all buckets in the lake
 - [ ] **Global total usage across all lakes** is available

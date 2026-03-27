@@ -41,7 +41,7 @@ func (h *LakesHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrIdempotencyMismatch) {
+		if isConflictError(err) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
@@ -71,7 +71,7 @@ func (h *LakesHandler) Resize(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrIdempotencyMismatch) {
+		if isConflictError(err) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
@@ -89,7 +89,7 @@ func (h *LakesHandler) Deprovision(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrIdempotencyMismatch) {
+		if isConflictError(err) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
@@ -97,6 +97,10 @@ func (h *LakesHandler) Deprovision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, op)
+}
+
+func isConflictError(err error) bool {
+	return errors.Is(err, domain.ErrIdempotencyMismatch) || errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrInvalidState)
 }
 
 func (h *LakesHandler) GetLake(w http.ResponseWriter, r *http.Request) {

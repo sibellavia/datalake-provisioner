@@ -68,3 +68,8 @@ data:
 
     CREATE INDEX IF NOT EXISTS idx_idempotency_operation_id
         ON idempotency_keys (operation_id);
+
+  0004_operation_state_guards.up.sql: |
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_operations_active_lake
+        ON operations (tenant_id, lake_id)
+        WHERE lake_id IS NOT NULL AND status IN ('pending', 'running');

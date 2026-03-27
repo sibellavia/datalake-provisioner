@@ -308,6 +308,24 @@ These features make the service feel more like a complete managed object storage
 
 ---
 
+#### 18. Evaluate `go-ceph/rgw/admin` to reduce custom Admin Ops code
+**Why:** after the multi-bucket model is in place, we may be able to reduce some of our custom RGW Admin Ops implementation while keeping our internal adapter.
+
+- [ ] Evaluate replacing custom RGW Admin Ops request/signing code with `github.com/ceph/go-ceph/rgw/admin`
+- [ ] Keep AWS S3 SDK for bucket create/head/delete and other S3 data-plane operations
+- [ ] Validate compatibility with our RGW endpoint behavior, especially:
+  - fixed `/admin` path assumption in the library
+  - signing/auth behavior against our Ceph RGW deployment
+  - user/key/quota/bucket-info APIs we rely on
+- [ ] Adopt only if it reduces maintenance without breaking working behavior
+
+**Notes**
+- This is an internal refactor candidate, not a product milestone.
+- It should come **after** multi-bucket work, not before it.
+- We should keep our own `ceph.Adapter` abstraction even if we replace some internals.
+
+---
+
 ## Suggested PR sequence
 
 1. [x] **PR-1**: Fix bucket ownership

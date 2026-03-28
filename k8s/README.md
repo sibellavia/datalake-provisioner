@@ -15,7 +15,6 @@ cp postgres-secret.example.yaml postgres-secret.yaml
 
 Edit:
 - `secret.yaml`:
-  - `INTERNAL_TOKEN`
   - `RGW_ACCESS_KEY_ID`
   - `RGW_SECRET_ACCESS_KEY`
   - `DATABASE_URL` (if different)
@@ -57,7 +56,6 @@ Then:
 ```bash
 curl -X POST http://127.0.0.1:8081/v1/lakes \
   -H 'Content-Type: application/json' \
-  -H 'X-Internal-Token: change-me' \
   -H 'X-Tenant: tenant-a' \
   -d '{"userId":"user-1","sizeGiB":10}'
 ```

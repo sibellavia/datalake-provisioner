@@ -55,11 +55,10 @@ func New(ctx context.Context) (*App, error) {
 	statsHandler := &handlers.StatsHandler{Provisioner: prov}
 
 	router := httpapi.NewRouter(httpapi.Deps{
-		InternalToken: cfg.InternalToken,
-		ReadyHandler:  readyHandler,
-		LakesHandler:  lakesHandler,
-		OpsHandler:    opsHandler,
-		StatsHandler:  statsHandler,
+		ReadyHandler: readyHandler,
+		LakesHandler: lakesHandler,
+		OpsHandler:   opsHandler,
+		StatsHandler: statsHandler,
 	})
 
 	if cfg.WorkerEnabled {

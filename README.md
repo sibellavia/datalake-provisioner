@@ -70,7 +70,6 @@ datalake-provisioner/
 - `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP gRPC endpoint, e.g. `otel-collector.observability.svc.cluster.local:4317`)
 - `OTEL_EXPORTER_OTLP_INSECURE` (`true|false`, default: `true`)
 - `DATABASE_URL` (default local postgres URL)
-- `INTERNAL_TOKEN` (required in real deployments)
 - `WORKER_ENABLED` (default: `true`)
 - `WORKER_POLL_INTERVAL_SECONDS` (default: `2`)
 - `WORKER_STALE_AFTER_SECONDS` (default: `120`)
@@ -84,10 +83,13 @@ datalake-provisioner/
 - `RGW_SECRET_ACCESS_KEY` (admin user)
 - `RGW_INSECURE_SKIP_VERIFY` (`true|false`)
 
-## API security (MVP)
-- `X-Internal-Token`: shared internal token
+## Request headers
 - `X-Tenant`: tenant context header
 - `Idempotency-Key`: optional header supported on create/resize/delete operations
+
+## Security note
+- The service currently has no built-in authn/authz layer.
+- It should be exposed only through trusted private network paths / gateway infrastructure.
 
 ## Health and readiness
 - `/health`: lightweight liveness endpoint
@@ -123,7 +125,6 @@ datalake-provisioner/
 ## End-to-end workflow (lab validated)
 1. User (or Movincloud) requests provisioning with `tenant`, `userId`, `sizeGiB`.
 2. Request reaches `datalake-provisioner` API (`POST /v1/lakes`) with:
-   - `X-Internal-Token`
    - `X-Tenant`
 3. Provisioner stores operation/lake state in PostgreSQL.
 4. Provisioner calls Ceph RGW Admin API (`RGW_ENDPOINT`, `RGW_ADMIN_PATH=/admin`) using admin credentials.
@@ -157,7 +158,6 @@ datalake-provisioner/
   - Postgres credentials
   - `DATABASE_URL`
   - RGW admin access key/secret
-  - internal token
 - Built/pushed amd64 image: `dev3at/datalake-provisioner:0.1.1`
 - Set numeric security context (`runAsUser/runAsGroup=65532`) for distroless container compatibility
 - Created `datalake` DB manually (existing PG volume), then reran migration job
@@ -198,7 +198,6 @@ Install/upgrade with explicit values for RGW + token:
 ```bash
 helm upgrade --install datalake-provisioner ./charts/datalake-provisioner \
   --namespace datalake --create-namespace \
-  --set provisioner.internalToken=change-me \
   --set provisioner.rgwEndpoint=http://192.168.3.251:7480 \
   --set provisioner.rgwAccessKeyId=<RGW_ACCESS_KEY_ID> \
   --set provisioner.rgwSecretAccessKey=<RGW_SECRET_ACCESS_KEY>
@@ -214,19 +213,18 @@ kubectl -n datalake port-forward svc/datalake-provisioner-datalake-provisioner 8
 ```bash
 curl -X POST http://localhost:8081/v1/lakes \
   -H 'Content-Type: application/json' \
-  -H 'X-Internal-Token: change-me' \
   -H 'X-Tenant: tenant-a' \
   -d '{"userId":"user-1","sizeGiB":10}'
 ```
 
 Poll operation:
 ```bash
-curl -H 'X-Internal-Token: change-me' -H 'X-Tenant: tenant-a' \
+curl -H 'X-Tenant: tenant-a' \
   http://localhost:8081/v1/operations/<operationId>
 ```
 
 Get lake:
 ```bash
-curl -H 'X-Internal-Token: change-me' -H 'X-Tenant: tenant-a' \
+curl -H 'X-Tenant: tenant-a' \
   http://localhost:8081/v1/lakes/<lakeId>
 ```

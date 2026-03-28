@@ -10,11 +10,10 @@ import (
 )
 
 type Deps struct {
-	InternalToken string
-	ReadyHandler  *handlers.ReadyHandler
-	LakesHandler  *handlers.LakesHandler
-	OpsHandler    *handlers.OperationsHandler
-	StatsHandler  *handlers.StatsHandler
+	ReadyHandler *handlers.ReadyHandler
+	LakesHandler *handlers.LakesHandler
+	OpsHandler   *handlers.OperationsHandler
+	StatsHandler *handlers.StatsHandler
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -30,7 +29,6 @@ func NewRouter(d Deps) http.Handler {
 	r.Handle("/metrics", observability.MetricsHandler())
 
 	r.Route("/v1", func(v1 chi.Router) {
-		v1.Use(handlers.InternalTokenMiddleware(d.InternalToken))
 		v1.Use(handlers.TenantMiddleware)
 
 		v1.Get("/stats/summary", d.StatsHandler.GetSummary)

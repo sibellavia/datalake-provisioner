@@ -4,12 +4,9 @@ info:
   version: 0.1.0
   description: |
     MVP Provisioner API for Movincloud Data Lake service.
-    AuthN/AuthZ integration is deferred; this version uses X-Internal-Token + X-Tenant.
+    Built-in authn/authz is deferred; tenant context is currently supplied via X-Tenant.
 servers:
   - url: http://localhost:8081
-
-security:
-  - InternalToken: []
 
 paths:
   /health:
@@ -50,8 +47,6 @@ paths:
                 $ref: '#/components/schemas/Operation'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
         '404':
@@ -233,12 +228,6 @@ paths:
           $ref: '#/components/responses/NotFound'
 
 components:
-  securitySchemes:
-    InternalToken:
-      type: apiKey
-      in: header
-      name: X-Internal-Token
-
   parameters:
     TenantHeader:
       in: header
@@ -280,12 +269,6 @@ components:
   responses:
     BadRequest:
       description: Bad request
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Unauthorized:
-      description: Unauthorized
       content:
         application/json:
           schema:

@@ -102,7 +102,6 @@ Set environment variables for `datalake-provisioner`:
 ```bash
 HTTP_PORT=8081
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/datalake?sslmode=disable
-INTERNAL_TOKEN=change-me
 
 RGW_ENDPOINT=http://192.168.3.251:7480
 RGW_ADMIN_PATH=/admin
@@ -121,7 +120,6 @@ RGW_INSECURE_SKIP_VERIFY=false
 ```bash
 curl -X POST http://127.0.0.1:8081/v1/lakes \
   -H 'Content-Type: application/json' \
-  -H 'X-Internal-Token: change-me' \
   -H 'X-Tenant: tenant-a' \
   -d '{"userId":"user-1","sizeGiB":10}'
 ```
@@ -129,14 +127,14 @@ curl -X POST http://127.0.0.1:8081/v1/lakes \
 ### Poll operation
 
 ```bash
-curl -H 'X-Internal-Token: change-me' -H 'X-Tenant: tenant-a' \
+curl -H 'X-Tenant: tenant-a' \
   http://127.0.0.1:8081/v1/operations/<operationId>
 ```
 
 ### Get lake
 
 ```bash
-curl -H 'X-Internal-Token: change-me' -H 'X-Tenant: tenant-a' \
+curl -H 'X-Tenant: tenant-a' \
   http://127.0.0.1:8081/v1/lakes/<lakeId>
 ```
 

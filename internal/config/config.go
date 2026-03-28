@@ -20,8 +20,6 @@ type Config struct {
 
 	DatabaseURL string
 
-	InternalToken string
-
 	WorkerEnabled      bool
 	WorkerPollInterval time.Duration
 	WorkerStaleAfter   time.Duration
@@ -46,7 +44,6 @@ func Load() Config {
 		OTELExporterOTLPEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
 		OTELExporterOTLPInsecure: getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", true),
 		DatabaseURL:              getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/datalake?sslmode=disable"),
-		InternalToken:            getEnv("INTERNAL_TOKEN", "change-me"),
 		WorkerEnabled:            getEnvBool("WORKER_ENABLED", true),
 		WorkerPollInterval:       time.Duration(getEnvInt("WORKER_POLL_INTERVAL_SECONDS", 2)) * time.Second,
 		WorkerStaleAfter:         time.Duration(getEnvInt("WORKER_STALE_AFTER_SECONDS", 120)) * time.Second,

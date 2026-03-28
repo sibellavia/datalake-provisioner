@@ -365,7 +365,7 @@ These items should follow immediately after the core multi-bucket model exists.
 
 - [ ] Restrict service exposure so traffic comes from Kong / trusted network paths only
 - [ ] Treat `X-Tenant` as trusted only when forwarded by Kong
-- [ ] Keep or harden the internal token strategy between Kong and service
+- [ ] Restrict direct service access so tenant context is only accepted from Kong / trusted network paths
 - [ ] Support `existingSecret` / external secret management in Helm
 - [ ] Reject insecure defaults outside dev/lab mode
 - [ ] Enforce TLS to RGW where possible

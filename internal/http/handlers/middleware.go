@@ -10,19 +10,6 @@ type contextKey string
 
 const tenantContextKey contextKey = "tenant"
 
-func InternalTokenMiddleware(expected string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := r.Header.Get("X-Internal-Token")
-			if expected != "" && token != expected {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid internal token"})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 func TenantMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenant := r.Header.Get("X-Tenant")

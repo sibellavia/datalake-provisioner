@@ -16,6 +16,16 @@ const (
 	LakeStatusDeleted      LakeStatus = "deleted"
 )
 
+type BucketStatus string
+
+const (
+	BucketStatusCreating BucketStatus = "creating"
+	BucketStatusReady    BucketStatus = "ready"
+	BucketStatusDeleting BucketStatus = "deleting"
+	BucketStatusFailed   BucketStatus = "failed"
+	BucketStatusDeleted  BucketStatus = "deleted"
+)
+
 type OperationStatus string
 
 const (
@@ -31,12 +41,22 @@ type Lake struct {
 	UserID           string     `json:"userId"`
 	RequestedSizeGiB int64      `json:"requestedSizeGiB"`
 	Status           LakeStatus `json:"status"`
-	URL              string     `json:"url,omitempty"`
 	RGWUser          string     `json:"rgwUser,omitempty"`
-	BucketName       string     `json:"bucketName,omitempty"`
 	LastError        string     `json:"lastError,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 	UpdatedAt        time.Time  `json:"updatedAt"`
+}
+
+type Bucket struct {
+	BucketID   string       `json:"bucketId"`
+	LakeID     string       `json:"lakeId"`
+	TenantID   string       `json:"tenantId"`
+	Name       string       `json:"name"`
+	BucketName string       `json:"bucketName"`
+	Status     BucketStatus `json:"status"`
+	LastError  string       `json:"lastError,omitempty"`
+	CreatedAt  time.Time    `json:"createdAt"`
+	UpdatedAt  time.Time    `json:"updatedAt"`
 }
 
 type Operation struct {

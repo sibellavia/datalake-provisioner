@@ -239,11 +239,7 @@ components:
         status:
           type: string
           enum: [provisioning, ready, resizing, deleting, failed, deleted]
-        url:
-          type: string
         rgwUser:
-          type: string
-        bucketName:
           type: string
         lastError:
           type: string

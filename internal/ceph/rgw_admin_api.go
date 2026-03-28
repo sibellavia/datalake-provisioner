@@ -30,7 +30,6 @@ type RGWAdminAPIAdapter struct {
 	InsecureSkipVerify bool
 
 	httpClient *http.Client
-	s3Client   *s3.Client
 	signer     *v4.Signer
 	creds      aws.Credentials
 }
@@ -91,17 +90,11 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 		creds:              creds,
 	}
 
-	adapter.s3Client, err = adapter.newS3Client(context.Background(), accessKeyID, secretAccessKey)
-	if err != nil {
-		return nil, fmt.Errorf("init admin s3 client: %w", err)
-	}
-
 	return adapter, nil
 }
 
 func (a *RGWAdminAPIAdapter) Provision(ctx context.Context, in ProvisionInput) (ProvisionOutput, error) {
 	uid := buildUID(in.LakeID)
-	bucketName := buildBucketName(in.LakeID)
 	displayName := fmt.Sprintf("lake-%s", in.LakeID)
 
 	user, err := a.getOrCreateUser(ctx, uid, displayName)
@@ -122,25 +115,11 @@ func (a *RGWAdminAPIAdapter) Provision(ctx context.Context, in ProvisionInput) (
 		return ProvisionOutput{}, fmt.Errorf("no s3 key available for user %s", uid)
 	}
 
-	userS3Client, err := a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
-	if err != nil {
-		return ProvisionOutput{}, fmt.Errorf("init s3 client for user %s: %w", uid, err)
-	}
-
-	if err := a.ensureBucket(ctx, userS3Client, bucketName); err != nil {
-		return ProvisionOutput{}, err
-	}
-
 	if err := a.setUserQuota(ctx, uid, in.SizeGiB); err != nil {
 		return ProvisionOutput{}, err
 	}
 
-	return ProvisionOutput{
-		RGWUser:    uid,
-		AccessKey:  user.Keys[0].AccessKey,
-		SecretKey:  user.Keys[0].SecretKey,
-		BucketName: bucketName,
-	}, nil
+	return ProvisionOutput{RGWUser: uid}, nil
 }
 
 func (a *RGWAdminAPIAdapter) Resize(ctx context.Context, lakeID string, sizeGiB int64) error {
@@ -150,30 +129,12 @@ func (a *RGWAdminAPIAdapter) Resize(ctx context.Context, lakeID string, sizeGiB 
 
 func (a *RGWAdminAPIAdapter) Deprovision(ctx context.Context, lakeID string) error {
 	uid := buildUID(lakeID)
-	bucketName := buildBucketName(lakeID)
-
-	bucketClient := a.s3Client
-	user, err := a.getUser(ctx, uid)
-	if err == nil {
-		if len(user.Keys) > 0 {
-			bucketClient, err = a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
-			if err != nil {
-				return fmt.Errorf("init s3 client for user %s: %w", uid, err)
-			}
-		}
-	} else if !isAdminAPINotFound(err) {
-		return fmt.Errorf("get rgw user %s: %w", uid, err)
-	}
-
-	if err := a.deleteBucketIfEmpty(ctx, bucketClient, bucketName); err != nil {
-		return err
-	}
 
 	params := url.Values{}
 	params.Set("uid", uid)
 	params.Set("purge-data", "true")
 	params.Set("purge-keys", "true")
-	_, err = a.adminRequest(ctx, http.MethodDelete, "/user", params, nil)
+	_, err := a.adminRequest(ctx, http.MethodDelete, "/user", params, nil)
 	if err != nil {
 		if isAdminAPINotFound(err) {
 			return nil
@@ -376,14 +337,6 @@ func buildUID(lakeID string) string {
 	id := strings.ToLower(strings.ReplaceAll(lakeID, "-", ""))
 	if len(id) > 20 {
 		id = id[:20]
-	}
-	return "lake-" + id
-}
-
-func buildBucketName(lakeID string) string {
-	id := strings.ToLower(strings.ReplaceAll(lakeID, "-", ""))
-	if len(id) > 40 {
-		id = id[:40]
 	}
 	return "lake-" + id
 }

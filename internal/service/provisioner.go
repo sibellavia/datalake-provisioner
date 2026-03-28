@@ -16,7 +16,7 @@ import (
 type Repository interface {
 	CreateLake(ctx context.Context, lake domain.Lake) error
 	GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error)
-	MarkLakeProvisioned(ctx context.Context, lakeID, tenantID, rgwUser, bucketName, url string) error
+	MarkLakeProvisioned(ctx context.Context, lakeID, tenantID, rgwUser string) error
 	MarkLakeResizing(ctx context.Context, lakeID, tenantID string) error
 	MarkLakeResized(ctx context.Context, lakeID, tenantID string, sizeGiB int64) error
 	MarkLakeDeleting(ctx context.Context, lakeID, tenantID string) error
@@ -274,7 +274,7 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 		return fmt.Errorf("ceph provision failed: %w", err)
 	}
 
-	if err := s.Repo.MarkLakeProvisioned(ctx, payload.LakeID, payload.TenantID, cephOut.RGWUser, cephOut.BucketName, ""); err != nil {
+	if err := s.Repo.MarkLakeProvisioned(ctx, payload.LakeID, payload.TenantID, cephOut.RGWUser); err != nil {
 		return fmt.Errorf("mark lake provisioned failed: %w", err)
 	}
 
@@ -282,7 +282,7 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("provision completed op=%s lake=%s tenant=%s bucket=%s", op.OperationID, payload.LakeID, payload.TenantID, cephOut.BucketName)
+	log.Printf("provision completed op=%s lake=%s tenant=%s rgwUser=%s", op.OperationID, payload.LakeID, payload.TenantID, cephOut.RGWUser)
 	return nil
 }
 

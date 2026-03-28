@@ -30,7 +30,7 @@ func (r *Repository) CreateLake(ctx context.Context, lake domain.Lake) error {
 func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error) {
 	var lake domain.Lake
 	err := r.DB.QueryRow(ctx, `
-		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(url,''), COALESCE(rgw_user,''), COALESCE(bucket_name,''), COALESCE(last_error,''), created_at, updated_at
+		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
 		FROM lakes
 		WHERE lake_id = $1 AND tenant_id = $2
 	`, lakeID, tenantID).Scan(
@@ -39,9 +39,7 @@ func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (doma
 		&lake.UserID,
 		&lake.RequestedSizeGiB,
 		&lake.Status,
-		&lake.URL,
 		&lake.RGWUser,
-		&lake.BucketName,
 		&lake.LastError,
 		&lake.CreatedAt,
 		&lake.UpdatedAt,
@@ -49,12 +47,12 @@ func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (doma
 	return lake, err
 }
 
-func (r *Repository) MarkLakeProvisioned(ctx context.Context, lakeID, tenantID, rgwUser, bucketName, url string) error {
+func (r *Repository) MarkLakeProvisioned(ctx context.Context, lakeID, tenantID, rgwUser string) error {
 	_, err := r.DB.Exec(ctx, `
 		UPDATE lakes
-		SET status = 'ready', rgw_user = $3, bucket_name = $4, url = $5, last_error = NULL, updated_at = NOW()
+		SET status = 'ready', rgw_user = $3, last_error = NULL, updated_at = NOW()
 		WHERE lake_id = $1 AND tenant_id = $2
-	`, lakeID, tenantID, rgwUser, bucketName, nullable(url))
+	`, lakeID, tenantID, rgwUser)
 	return err
 }
 
@@ -298,9 +296,9 @@ func (r *Repository) MarkOperationFailed(ctx context.Context, operationID, tenan
 
 func (r *Repository) insertLake(ctx context.Context, exec execer, lake domain.Lake) error {
 	_, err := exec.Exec(ctx, `
-		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, url, rgw_user, bucket_name, last_error, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-	`, lake.LakeID, lake.TenantID, lake.UserID, lake.RequestedSizeGiB, lake.Status, nullable(lake.URL), nullable(lake.RGWUser), nullable(lake.BucketName), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
+		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, rgw_user, last_error, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, lake.LakeID, lake.TenantID, lake.UserID, lake.RequestedSizeGiB, lake.Status, nullable(lake.RGWUser), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
 	return err
 }
 

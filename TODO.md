@@ -7,16 +7,18 @@ This file captures the recommended implementation order to evolve `datalake-prov
 - Keep the current **direct Ceph RGW** architecture for now.
 - Keep the Go service as the **product API / control-plane**.
 - Treat **Kong** as the trusted gateway / single ingress point.
+- End users must **never** interact directly with **RGW** or **Ceph**.
 - Evolve the product model toward:
   - **1 lake = 1 top-level product object**
-  - **1 lake = 1 RGW user/account**
+  - **1 lake = 1 internal RGW user/account**
   - **1 lake quota = 1 RGW user quota**
   - **N buckets per lake**
 - For the clean design, a new lake should be provisioned as an **empty boundary**:
-  - quota + credentials
+  - quota + internal storage credentials
   - **zero buckets by default**
 - No backward-compatibility constraints are required yet because the service is not in use.
-- First multi-bucket version should keep **one lake-wide credential pair**.
+- First multi-bucket version should keep **one internal lake storage credential pair per lake**.
+- Those RGW credentials are **backend-only** and must not be exposed directly to end users.
 - The provider view must support both:
   - **per-lake usage**
   - **global usage across all lakes**
@@ -145,12 +147,14 @@ Do this immediately after P0 is in place.
 - We do **not** need backward compatibility or migration shims for legacy consumers.
 - A newly created lake should start **empty**.
 - `POST /v1/lakes` provisions the **lake boundary** only:
-  - RGW user/account
+  - internal RGW user/account
   - lake-wide quota
-  - lake-wide credentials
+  - internal lake storage credentials
   - zero buckets by default
 - Buckets are explicit child resources created later.
-- Keep **one lake-wide credential pair** for the first version.
+- Keep **one internal lake storage credential pair** for the first version.
+- Raw RGW credentials are **backend-only** and must not be exposed to end users.
+- End users must not access RGW or Ceph directly; user-facing access will be issued by the control-plane later as a separate product-layer concern.
 - Keep **lake quota = RGW user quota**.
 - Keep **one active operation per lake** for now, even for bucket operations.
 - Per-lake aggregate usage should come from **RGW user stats**.
@@ -162,7 +166,7 @@ Do this immediately after P0 is in place.
 
 #### 5. Introduce a clean lake + bucket schema
 **Target model**
-- 1 lake = 1 RGW user/account
+- 1 lake = 1 internal RGW user/account
 - 1 lake quota = 1 RGW user quota
 - 1 lake = 0..N buckets
 
@@ -176,7 +180,7 @@ Do this immediately after P0 is in place.
 - [ ] Define the bucket naming strategy for physical S3 bucket names
 
 **Done when**
-- A lake is modeled as an empty boundary with quota and credentials
+- A lake is modeled as an empty boundary with quota and internal storage credentials
 - Buckets are first-class child resources in the schema
 - The service no longer assumes one bucket per lake anywhere in the core model
 
@@ -333,10 +337,11 @@ These items add the provider view needed to operate the service at scale.
 These features make the service feel more like a complete managed object storage product.
 
 #### 15. Credentials lifecycle
-- [ ] Decide how credentials are returned to clients
-- [ ] Add credential rotation flow
+- [ ] Decide how **product-issued** credentials are returned to clients
+- [ ] Keep internal RGW credentials backend-only and never expose them directly to end users
+- [ ] Add product credential rotation flow
 - [ ] Add revoke/regenerate support
-- [ ] Consider multiple credentials / service accounts per lake later
+- [ ] Consider multiple product credentials / service accounts per lake later
 
 ---
 
@@ -358,7 +363,8 @@ These features make the service feel more like a complete managed object storage
 #### 18. Access model evolution
 - [ ] Evaluate bucket-scoped policies
 - [ ] Evaluate read-only / read-write service accounts
-- [ ] Keep lake-wide credentials as initial simple model
+- [ ] Keep a **lake-scoped product access model** as the initial simple model
+- [ ] Ensure all user-facing access is mediated by the product control-plane/gateway, not direct RGW exposure
 
 ---
 
@@ -416,7 +422,7 @@ The next major milestone is complete when all of the following are true:
 - [ ] Operations survive API pod restart
 - [x] Idempotent retries are safe
 - [x] Conflicting operations are prevented
-- [ ] A lake is provisioned as an **empty boundary** (quota + credentials, zero buckets)
+- [ ] A lake is provisioned as an **empty boundary** (quota + internal storage credentials, zero buckets)
 - [ ] One lake can contain multiple explicit buckets
 - [ ] Per-lake usage is exposed from RGW user stats
 - [ ] Per-bucket usage is exposed from bucket stats

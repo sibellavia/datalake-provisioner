@@ -10,10 +10,7 @@ type ProvisionInput struct {
 }
 
 type ProvisionOutput struct {
-	RGWUser    string
-	AccessKey  string
-	SecretKey  string
-	BucketName string
+	RGWUser string
 }
 
 type Adapter interface {

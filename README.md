@@ -3,7 +3,7 @@
 ## Purpose
 Provision and manage Data Lake instances for Movincloud on top of **Ceph RGW**.
 
-This service currently focuses on Ceph provisioning lifecycle (user, bucket, quota) and async operation tracking.
+This service currently focuses on Ceph provisioning lifecycle (internal RGW user, quota, and evolving multi-bucket model) plus async operation tracking.
 
 ## Current status
 Implemented:
@@ -74,13 +74,13 @@ datalake-provisioner/
 2. create lake row (`provisioning`) + operation row (`pending`)
 3. background worker picks up the pending operation from PostgreSQL:
    - mark operation `running`
-   - Ceph: get/create user
-   - Ceph: ensure S3 key
-   - Ceph: ensure bucket
+   - Ceph: get/create internal RGW user
+   - Ceph: ensure internal S3 key
    - Ceph: set/enable user quota
    - mark lake `ready`
    - mark operation `success`
-4. on errors: operation is retried up to `WORKER_MAX_ATTEMPTS`, then lake and operation are marked `failed`
+4. a newly provisioned lake is an **empty boundary** with quota and internal storage credentials; buckets will be explicit child resources
+5. on errors: operation is retried up to `WORKER_MAX_ATTEMPTS`, then lake and operation are marked `failed`
 
 ## End-to-end workflow (lab validated)
 1. User (or Movincloud) requests provisioning with `tenant`, `userId`, `sizeGiB`.
@@ -91,8 +91,7 @@ datalake-provisioner/
 4. Provisioner calls Ceph RGW Admin API (`RGW_ENDPOINT`, `RGW_ADMIN_PATH=/admin`) using admin credentials.
 5. Ceph side actions performed:
    - RGW user create/reuse (lake-scoped uid)
-   - S3 access keys ensure/create
-   - bucket create/ensure
+   - internal S3 access keys ensure/create
    - `user_quota` set and enabled to requested size
 6. Provisioner updates DB state:
    - operation `success`
@@ -102,7 +101,6 @@ datalake-provisioner/
    - `GET /v1/lakes/{lakeId}`
 8. Ceph validation (manual):
    - `radosgw-admin user info --uid <rgwUser>`
-   - `radosgw-admin bucket list | grep <bucketName>`
 
 ## Manual infrastructure setup performed (lab)
 ### Proxmox/Ceph host

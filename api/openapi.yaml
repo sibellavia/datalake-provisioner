@@ -26,6 +26,20 @@ paths:
                     example: ok
 
   /v1/lakes:
+    get:
+      summary: List data lakes for the current tenant
+      operationId: listLakes
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+      responses:
+        '200':
+          description: Tenant lake list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lake'
     post:
       summary: Provision a new data lake
       operationId: provisionLake
@@ -54,13 +68,27 @@ paths:
 
   /v1/stats/summary:
     get:
-      summary: Get fleet usage summary across all lakes
+      summary: Get fleet-wide usage summary across all lakes
       operationId: getFleetUsageSummary
       parameters:
         - $ref: '#/components/parameters/TenantHeader'
       responses:
         '200':
           description: Fleet usage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetUsageSummary'
+
+  /v1/tenant/summary:
+    get:
+      summary: Get tenant usage summary across all lakes owned by the tenant
+      operationId: getTenantUsageSummary
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+      responses:
+        '200':
+          description: Tenant usage summary
           content:
             application/json:
               schema:
@@ -127,6 +155,25 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+
+  /v1/lakes/{lakeId}/operations:
+    get:
+      summary: List operations for a data lake
+      operationId: listLakeOperations
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+      responses:
+        '200':
+          description: Lake operation list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Operation'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /v1/lakes/{lakeId}/buckets:
     post:

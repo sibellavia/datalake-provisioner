@@ -27,14 +27,19 @@ type Repository interface {
 	MarkLakeFailed(ctx context.Context, lakeID, tenantID, errorMessage string) error
 	CountNonDeletedBuckets(ctx context.Context, lakeID, tenantID string) (int, error)
 	CountActiveLakes(ctx context.Context) (int, error)
+	CountActiveLakesByTenant(ctx context.Context, tenantID string) (int, error)
 	CountActiveBuckets(ctx context.Context) (int, error)
+	CountActiveBucketsByTenant(ctx context.Context, tenantID string) (int, error)
 	SumCommittedQuotaBytes(ctx context.Context) (int64, error)
+	SumCommittedQuotaBytesByTenant(ctx context.Context, tenantID string) (int64, error)
 	ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
+	ListActiveLakesByTenant(ctx context.Context, tenantID string) ([]domain.Lake, error)
 
 	StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartBucketCreateOperation(ctx context.Context, bucket domain.Bucket, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartOperation(ctx context.Context, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error)
+	ListOperationsByLake(ctx context.Context, lakeID, tenantID string) ([]domain.Operation, error)
 	ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error)
 	RequeueOperation(ctx context.Context, operationID, tenantID, errorMessage string, nextAttemptAt time.Time) error
 	ResetStaleRunningOperations(ctx context.Context, staleBefore time.Time) (int64, error)
@@ -759,6 +764,23 @@ func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID st
 	return op, nil
 }
 
+func (s *Provisioner) ListLakeOperations(ctx context.Context, lakeID, tenantID string) (ops []domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.list_lake_operations", operationSpanAttributes("", "", tenantID, lakeID, "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	if _, err := s.Repo.GetLake(ctx, lakeID, tenantID); err != nil {
+		return nil, fmt.Errorf("get lake: %w", err)
+	}
+	ops, err = s.Repo.ListOperationsByLake(ctx, lakeID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list lake operations: %w", err)
+	}
+	return ops, nil
+}
+
 func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (lake domain.Lake, err error) {
 	ctx, span := startServiceSpan(ctx, "service.get_lake", operationSpanAttributes("", "", tenantID, lakeID, "")...)
 	defer func() {
@@ -779,12 +801,17 @@ func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (lak
 	if err != nil {
 		return domain.Lake{}, fmt.Errorf("count lake buckets: %w", err)
 	}
+
+	lake.BucketCount = bucketCount
+	if lake.RGWUser == "" {
+		return lake, nil
+	}
+
 	usage, err := s.Ceph.GetLakeUsage(ctx, lakeID)
 	if err != nil {
 		return domain.Lake{}, fmt.Errorf("get lake usage: %w", err)
 	}
 
-	lake.BucketCount = bucketCount
 	lake.UsedBytes = usage.UsedBytes
 	lake.ObjectCount = usage.ObjectCount
 	return lake, nil
@@ -814,6 +841,43 @@ func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID 
 	bucket.UsedBytes = usage.UsedBytes
 	bucket.ObjectCount = usage.ObjectCount
 	return bucket, nil
+}
+
+func (s *Provisioner) ListLakes(ctx context.Context, tenantID string) (lakes []domain.Lake, err error) {
+	ctx, span := startServiceSpan(ctx, "service.list_lakes", operationSpanAttributes("", "", tenantID, "", "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	if s.Ceph == nil {
+		return nil, fmt.Errorf("ceph adapter not configured")
+	}
+
+	lakes, err = s.Repo.ListActiveLakesByTenant(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list active lakes by tenant: %w", err)
+	}
+
+	for i := range lakes {
+		bucketCount, err := s.Repo.CountNonDeletedBuckets(ctx, lakes[i].LakeID, tenantID)
+		if err != nil {
+			return nil, fmt.Errorf("count lake buckets for %s: %w", lakes[i].LakeID, err)
+		}
+		lakes[i].BucketCount = bucketCount
+
+		if lakes[i].RGWUser == "" {
+			continue
+		}
+		usage, err := s.Ceph.GetLakeUsage(ctx, lakes[i].LakeID)
+		if err != nil {
+			return nil, fmt.Errorf("get lake usage for %s: %w", lakes[i].LakeID, err)
+		}
+		lakes[i].UsedBytes = usage.UsedBytes
+		lakes[i].ObjectCount = usage.ObjectCount
+	}
+
+	return lakes, nil
 }
 
 func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) (buckets []domain.Bucket, err error) {
@@ -882,6 +946,56 @@ func (s *Provisioner) GetFleetUsageSummary(ctx context.Context) (summary domain.
 		TotalCommittedBytes: totalCommittedBytes,
 	}
 	for _, lake := range lakes {
+		if lake.RGWUser == "" {
+			continue
+		}
+		usage, err := s.Ceph.GetLakeUsage(ctx, lake.LakeID)
+		if err != nil {
+			return domain.FleetUsageSummary{}, fmt.Errorf("get lake usage for %s: %w", lake.LakeID, err)
+		}
+		summary.TotalUsedBytes += usage.UsedBytes
+		summary.TotalObjectCount += usage.ObjectCount
+	}
+	return summary, nil
+}
+
+func (s *Provisioner) GetTenantUsageSummary(ctx context.Context, tenantID string) (summary domain.FleetUsageSummary, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_tenant_usage_summary", operationSpanAttributes("", "", tenantID, "", "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	if s.Ceph == nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("ceph adapter not configured")
+	}
+
+	lakeCount, err := s.Repo.CountActiveLakesByTenant(ctx, tenantID)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("count active lakes by tenant: %w", err)
+	}
+	bucketCount, err := s.Repo.CountActiveBucketsByTenant(ctx, tenantID)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("count active buckets by tenant: %w", err)
+	}
+	totalCommittedBytes, err := s.Repo.SumCommittedQuotaBytesByTenant(ctx, tenantID)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("sum committed quota by tenant: %w", err)
+	}
+	lakes, err := s.Repo.ListActiveLakesByTenant(ctx, tenantID)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("list active lakes by tenant: %w", err)
+	}
+
+	summary = domain.FleetUsageSummary{
+		LakeCount:           lakeCount,
+		BucketCount:         bucketCount,
+		TotalCommittedBytes: totalCommittedBytes,
+	}
+	for _, lake := range lakes {
+		if lake.RGWUser == "" {
+			continue
+		}
 		usage, err := s.Ceph.GetLakeUsage(ctx, lake.LakeID)
 		if err != nil {
 			return domain.FleetUsageSummary{}, fmt.Errorf("get lake usage for %s: %w", lake.LakeID, err)

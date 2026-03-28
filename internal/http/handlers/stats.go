@@ -18,3 +18,14 @@ func (h *StatsHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, summary)
 }
+
+func (h *StatsHandler) GetTenantSummary(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+
+	summary, err := h.Provisioner.GetTenantUsageSummary(r.Context(), tenant)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, summary)
+}

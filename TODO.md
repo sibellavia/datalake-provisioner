@@ -461,7 +461,13 @@ These features make the service feel more like a complete managed object storage
 
 ---
 
-#### 19. Re-evaluate broader `go-ceph/rgw/admin` usage only if needed
+#### 19. Shared app UX metadata
+- [ ] Add optional lake display metadata (`name`, `displayName`, `description`) for user-facing shared app UX
+- [ ] Keep `lakeId` usable as a fallback identifier, but do not force the UI to rely on raw UUIDs forever
+
+---
+
+#### 20. Re-evaluate broader `go-ceph/rgw/admin` usage only if needed
 **Status:** core RGW Admin Ops adoption was already done during the adapter refactor in P1.
 
 - [x] Use `github.com/ceph/go-ceph/rgw/admin` for core RGW Admin Ops in our internal adapter

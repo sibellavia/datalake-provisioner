@@ -22,3 +22,15 @@ func (h *OperationsHandler) GetOperation(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, op)
 }
+
+func (h *OperationsHandler) ListLakeOperations(w http.ResponseWriter, r *http.Request) {
+	lakeID := chi.URLParam(r, "lakeId")
+	tenant := tenantFromContext(r.Context())
+
+	ops, err := h.Provisioner.ListLakeOperations(r.Context(), lakeID, tenant)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ops)
+}

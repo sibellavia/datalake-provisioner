@@ -31,6 +31,17 @@ type createBucketRequest struct {
 
 var bucketNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$`)
 
+func (h *LakesHandler) ListLakes(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromContext(r.Context())
+
+	lakes, err := h.Provisioner.ListLakes(r.Context(), tenant)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, lakes)
+}
+
 func (h *LakesHandler) Provision(w http.ResponseWriter, r *http.Request) {
 	var req provisionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

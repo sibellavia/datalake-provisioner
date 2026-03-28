@@ -124,6 +124,16 @@ func (r *Repository) CountActiveLakes(ctx context.Context) (int, error) {
 	return count, err
 }
 
+func (r *Repository) CountActiveLakesByTenant(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := r.DB.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM lakes
+		WHERE tenant_id = $1 AND status <> 'deleted'
+	`, tenantID).Scan(&count)
+	return count, err
+}
+
 func (r *Repository) CountActiveBuckets(ctx context.Context) (int, error) {
 	var count int
 	err := r.DB.QueryRow(ctx, `
@@ -131,6 +141,16 @@ func (r *Repository) CountActiveBuckets(ctx context.Context) (int, error) {
 		FROM buckets
 		WHERE status <> 'deleted'
 	`).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountActiveBucketsByTenant(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := r.DB.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM buckets
+		WHERE tenant_id = $1 AND status <> 'deleted'
+	`, tenantID).Scan(&count)
 	return count, err
 }
 
@@ -144,6 +164,16 @@ func (r *Repository) SumCommittedQuotaBytes(ctx context.Context) (int64, error) 
 	return total, err
 }
 
+func (r *Repository) SumCommittedQuotaBytesByTenant(ctx context.Context, tenantID string) (int64, error) {
+	var total int64
+	err := r.DB.QueryRow(ctx, `
+		SELECT COALESCE(SUM(requested_size_gib * 1024 * 1024 * 1024), 0)::bigint
+		FROM lakes
+		WHERE tenant_id = $1 AND status <> 'deleted'
+	`, tenantID).Scan(&total)
+	return total, err
+}
+
 func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error) {
 	rows, err := r.DB.Query(ctx, `
 		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
@@ -151,6 +181,42 @@ func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
 		WHERE status <> 'deleted'
 		ORDER BY created_at ASC
 	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lakes := make([]domain.Lake, 0)
+	for rows.Next() {
+		var lake domain.Lake
+		if err := rows.Scan(
+			&lake.LakeID,
+			&lake.TenantID,
+			&lake.UserID,
+			&lake.RequestedSizeGiB,
+			&lake.Status,
+			&lake.RGWUser,
+			&lake.LastError,
+			&lake.CreatedAt,
+			&lake.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		lakes = append(lakes, lake)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return lakes, nil
+}
+
+func (r *Repository) ListActiveLakesByTenant(ctx context.Context, tenantID string) ([]domain.Lake, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
+		FROM lakes
+		WHERE tenant_id = $1 AND status <> 'deleted'
+		ORDER BY created_at ASC
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +393,48 @@ func (r *Repository) GetOperation(ctx context.Context, operationID, tenantID str
 		return domain.Operation{}, domain.ErrNotFound
 	}
 	return op, err
+}
+
+func (r *Repository) ListOperationsByLake(ctx context.Context, lakeID, tenantID string) ([]domain.Operation, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT operation_id, operation_type, COALESCE(lake_id::text,''), COALESCE(bucket_id::text,''), tenant_id, status, COALESCE(error_message,''), started_at, ended_at,
+		       COALESCE(request_payload, '{}'::jsonb), COALESCE(attempt_count, 0), COALESCE(next_attempt_at, NOW()), COALESCE(updated_at, started_at), COALESCE(error_code, '')
+		FROM operations
+		WHERE lake_id = $1 AND tenant_id = $2
+		ORDER BY started_at DESC, operation_id DESC
+	`, lakeID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	ops := make([]domain.Operation, 0)
+	for rows.Next() {
+		var op domain.Operation
+		if err := rows.Scan(
+			&op.OperationID,
+			&op.OperationType,
+			&op.LakeID,
+			&op.BucketID,
+			&op.TenantID,
+			&op.Status,
+			&op.ErrorMessage,
+			&op.StartedAt,
+			&op.EndedAt,
+			&op.RequestPayload,
+			&op.AttemptCount,
+			&op.NextAttemptAt,
+			&op.UpdatedAt,
+			&op.ErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		ops = append(ops, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ops, nil
 }
 
 func (r *Repository) ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error) {

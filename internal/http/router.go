@@ -32,11 +32,14 @@ func NewRouter(d Deps) http.Handler {
 		v1.Use(handlers.TenantMiddleware)
 
 		v1.Get("/stats/summary", d.StatsHandler.GetSummary)
+		v1.Get("/tenant/summary", d.StatsHandler.GetTenantSummary)
 
+		v1.Get("/lakes", d.LakesHandler.ListLakes)
 		v1.Post("/lakes", d.LakesHandler.Provision)
 		v1.Post("/lakes/{lakeId}/resize", d.LakesHandler.Resize)
 		v1.Delete("/lakes/{lakeId}", d.LakesHandler.Deprovision)
 		v1.Get("/lakes/{lakeId}", d.LakesHandler.GetLake)
+		v1.Get("/lakes/{lakeId}/operations", d.OpsHandler.ListLakeOperations)
 		v1.Post("/lakes/{lakeId}/buckets", d.LakesHandler.CreateBucket)
 		v1.Get("/lakes/{lakeId}/buckets", d.LakesHandler.ListBuckets)
 		v1.Get("/lakes/{lakeId}/buckets/{bucketId}", d.LakesHandler.GetBucket)

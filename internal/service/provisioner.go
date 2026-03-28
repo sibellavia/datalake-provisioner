@@ -264,17 +264,15 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 		return fmt.Errorf("invalid provision payload")
 	}
 
-	cephOut, err := s.Ceph.Provision(ctx, ceph.ProvisionInput{
-		LakeID:   payload.LakeID,
-		TenantID: payload.TenantID,
-		UserID:   payload.UserID,
-		SizeGiB:  payload.SizeGiB,
-	})
+	lakeAccess, err := s.Ceph.EnsureLake(ctx, payload.LakeID)
 	if err != nil {
-		return fmt.Errorf("ceph provision failed: %w", err)
+		return fmt.Errorf("ceph ensure lake failed: %w", err)
+	}
+	if err := s.Ceph.SetLakeQuota(ctx, payload.LakeID, payload.SizeGiB); err != nil {
+		return fmt.Errorf("ceph set lake quota failed: %w", err)
 	}
 
-	if err := s.Repo.MarkLakeProvisioned(ctx, payload.LakeID, payload.TenantID, cephOut.RGWUser); err != nil {
+	if err := s.Repo.MarkLakeProvisioned(ctx, payload.LakeID, payload.TenantID, lakeAccess.RGWUser); err != nil {
 		return fmt.Errorf("mark lake provisioned failed: %w", err)
 	}
 
@@ -282,7 +280,7 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("provision completed op=%s lake=%s tenant=%s rgwUser=%s", op.OperationID, payload.LakeID, payload.TenantID, cephOut.RGWUser)
+	log.Printf("provision completed op=%s lake=%s tenant=%s rgwUser=%s", op.OperationID, payload.LakeID, payload.TenantID, lakeAccess.RGWUser)
 	return nil
 }
 
@@ -297,7 +295,7 @@ func (s *Provisioner) executeResize(ctx context.Context, op domain.Operation, pa
 	if err := s.Repo.MarkLakeResizing(ctx, payload.LakeID, payload.TenantID); err != nil {
 		return fmt.Errorf("mark lake resizing failed: %w", err)
 	}
-	if err := s.Ceph.Resize(ctx, payload.LakeID, payload.SizeGiB); err != nil {
+	if err := s.Ceph.SetLakeQuota(ctx, payload.LakeID, payload.SizeGiB); err != nil {
 		return fmt.Errorf("ceph resize failed: %w", err)
 	}
 
@@ -324,7 +322,7 @@ func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operatio
 	if err := s.Repo.MarkLakeDeleting(ctx, payload.LakeID, payload.TenantID); err != nil {
 		return fmt.Errorf("mark lake deleting failed: %w", err)
 	}
-	if err := s.Ceph.Deprovision(ctx, payload.LakeID); err != nil {
+	if err := s.Ceph.DeleteLake(ctx, payload.LakeID); err != nil {
 		return fmt.Errorf("ceph deprovision failed: %w", err)
 	}
 

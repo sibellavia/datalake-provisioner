@@ -1,54 +1,29 @@
 package ceph
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"crypto/tls"
-	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	rgwadmin "github.com/ceph/go-ceph/rgw/admin"
 )
 
 type RGWAdminAPIAdapter struct {
 	Endpoint           string
 	AdminPath          string
 	Region             string
-	AccessKeyID        string
-	SecretAccessKey    string
 	InsecureSkipVerify bool
 
-	httpClient *http.Client
-	signer     *v4.Signer
-	creds      aws.Credentials
-}
-
-type rgwUserResponse struct {
-	UserID string `json:"user_id"`
-	Keys   []struct {
-		AccessKey string `json:"access_key"`
-		SecretKey string `json:"secret_key"`
-	} `json:"keys"`
-}
-
-type adminAPIError struct {
-	StatusCode int
-	Body       string
-}
-
-func (e *adminAPIError) Error() string {
-	return fmt.Sprintf("rgw admin api error: status=%d body=%s", e.StatusCode, e.Body)
+	httpClient  *http.Client
+	adminClient *rgwadmin.API
 }
 
 func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAccessKey string, insecureSkipVerify bool) (*RGWAdminAPIAdapter, error) {
@@ -64,6 +39,10 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	if !strings.HasPrefix(adminPath, "/") {
 		adminPath = "/" + adminPath
 	}
+	adminPath = strings.TrimRight(adminPath, "/")
+	if adminPath != "/admin" {
+		return nil, fmt.Errorf("rgw admin path %q unsupported: go-ceph/rgw/admin expects /admin", adminPath)
+	}
 	if region == "" {
 		region = "us-east-1"
 	}
@@ -72,71 +51,65 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec
 	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: transport}
 
-	staticCreds := credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")
-	creds, err := staticCreds.Retrieve(context.Background())
+	adminClient, err := rgwadmin.New(strings.TrimRight(endpoint, "/"), accessKeyID, secretAccessKey, httpClient)
 	if err != nil {
-		return nil, fmt.Errorf("retrieve static credentials: %w", err)
+		return nil, fmt.Errorf("init rgw admin client: %w", err)
 	}
 
-	adapter := &RGWAdminAPIAdapter{
+	return &RGWAdminAPIAdapter{
 		Endpoint:           strings.TrimRight(endpoint, "/"),
-		AdminPath:          strings.TrimRight(adminPath, "/"),
+		AdminPath:          adminPath,
 		Region:             region,
-		AccessKeyID:        accessKeyID,
-		SecretAccessKey:    secretAccessKey,
 		InsecureSkipVerify: insecureSkipVerify,
 		httpClient:         httpClient,
-		signer:             v4.NewSigner(),
-		creds:              creds,
-	}
-
-	return adapter, nil
+		adminClient:        adminClient,
+	}, nil
 }
 
-func (a *RGWAdminAPIAdapter) Provision(ctx context.Context, in ProvisionInput) (ProvisionOutput, error) {
-	uid := buildUID(in.LakeID)
-	displayName := fmt.Sprintf("lake-%s", in.LakeID)
-
-	user, err := a.getOrCreateUser(ctx, uid, displayName)
+func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error) {
+	user, err := a.ensureLakeUserWithKey(ctx, lakeID)
 	if err != nil {
-		return ProvisionOutput{}, err
+		return LakeAccess{}, err
 	}
-
-	if len(user.Keys) == 0 {
-		if err := a.createS3Key(ctx, uid); err != nil {
-			return ProvisionOutput{}, err
-		}
-		user, err = a.getUser(ctx, uid)
-		if err != nil {
-			return ProvisionOutput{}, err
-		}
-	}
-	if len(user.Keys) == 0 {
-		return ProvisionOutput{}, fmt.Errorf("no s3 key available for user %s", uid)
-	}
-
-	if err := a.setUserQuota(ctx, uid, in.SizeGiB); err != nil {
-		return ProvisionOutput{}, err
-	}
-
-	return ProvisionOutput{RGWUser: uid}, nil
+	return LakeAccess{RGWUser: user.ID}, nil
 }
 
-func (a *RGWAdminAPIAdapter) Resize(ctx context.Context, lakeID string, sizeGiB int64) error {
+func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) error {
+	if sizeGiB <= 0 {
+		return fmt.Errorf("invalid sizeGiB %d", sizeGiB)
+	}
+
+	maxSizeKB := int(sizeGiB * 1024 * 1024)
+	enabled := true
 	uid := buildUID(lakeID)
-	return a.setUserQuota(ctx, uid, sizeGiB)
+	err := a.adminClient.SetUserQuota(ctx, rgwadmin.QuotaSpec{
+		UID:       uid,
+		Enabled:   &enabled,
+		MaxSizeKb: &maxSizeKB,
+	})
+	if err != nil {
+		return fmt.Errorf("set user quota %s: %w", uid, err)
+	}
+	return nil
 }
 
-func (a *RGWAdminAPIAdapter) Deprovision(ctx context.Context, lakeID string) error {
+func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) error {
 	uid := buildUID(lakeID)
 
-	params := url.Values{}
-	params.Set("uid", uid)
-	params.Set("purge-data", "true")
-	params.Set("purge-keys", "true")
-	_, err := a.adminRequest(ctx, http.MethodDelete, "/user", params, nil)
+	buckets, err := a.adminClient.ListUsersBuckets(ctx, uid)
 	if err != nil {
-		if isAdminAPINotFound(err) {
+		if errors.Is(err, rgwadmin.ErrNoSuchUser) {
+			return nil
+		}
+		return fmt.Errorf("list rgw buckets for user %s: %w", uid, err)
+	}
+	if len(buckets) > 0 {
+		return fmt.Errorf("cannot delete lake %s: rgw user %s still owns %d bucket(s)", lakeID, uid, len(buckets))
+	}
+
+	err = a.adminClient.RemoveUser(ctx, rgwadmin.User{ID: uid})
+	if err != nil {
+		if errors.Is(err, rgwadmin.ErrNoSuchUser) {
 			return nil
 		}
 		return fmt.Errorf("delete rgw user %s: %w", uid, err)
@@ -144,56 +117,133 @@ func (a *RGWAdminAPIAdapter) Deprovision(ctx context.Context, lakeID string) err
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) getOrCreateUser(ctx context.Context, uid, displayName string) (rgwUserResponse, error) {
-	user, err := a.getUser(ctx, uid)
-	if err == nil {
+func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketName string) error {
+	user, err := a.getLakeUserWithKey(ctx, lakeID)
+	if err != nil {
+		return err
+	}
+
+	s3Client, err := a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
+	if err != nil {
+		return fmt.Errorf("init s3 client for user %s: %w", user.ID, err)
+	}
+	return a.ensureBucket(ctx, s3Client, bucketName)
+}
+
+func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bucketName string) error {
+	user, err := a.getLakeUserWithKey(ctx, lakeID)
+	if err != nil {
+		return err
+	}
+
+	s3Client, err := a.newS3Client(ctx, user.Keys[0].AccessKey, user.Keys[0].SecretKey)
+	if err != nil {
+		return fmt.Errorf("init s3 client for user %s: %w", user.ID, err)
+	}
+	return a.deleteBucketIfEmpty(ctx, s3Client, bucketName)
+}
+
+func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (LakeUsage, error) {
+	user, err := a.getLakeUser(ctx, lakeID, true)
+	if err != nil {
+		return LakeUsage{}, err
+	}
+
+	return LakeUsage{
+		UsedBytes:   uint64PtrToInt64(user.Stat.Size),
+		ObjectCount: uint64PtrToInt64(user.Stat.NumObjects),
+	}, nil
+}
+
+func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName string) (BucketUsage, error) {
+	bucket, err := a.adminClient.GetBucketInfo(ctx, rgwadmin.Bucket{Bucket: bucketName})
+	if err != nil {
+		return BucketUsage{}, fmt.Errorf("get bucket info %s: %w", bucketName, err)
+	}
+
+	usedBytes := uint64PtrToInt64(bucket.Usage.RgwMain.Size)
+	if usedBytes == 0 {
+		usedBytes = uint64PtrToInt64(bucket.Usage.RgwMain.SizeActual)
+	}
+
+	return BucketUsage{
+		UsedBytes:   usedBytes,
+		ObjectCount: uint64PtrToInt64(bucket.Usage.RgwMain.NumObjects),
+	}, nil
+}
+
+func (a *RGWAdminAPIAdapter) ensureLakeUserWithKey(ctx context.Context, lakeID string) (rgwadmin.User, error) {
+	user, err := a.getLakeUser(ctx, lakeID, false)
+	if err != nil {
+		if !errors.Is(err, rgwadmin.ErrNoSuchUser) {
+			return rgwadmin.User{}, err
+		}
+
+		generateKey := true
+		user, err = a.adminClient.CreateUser(ctx, rgwadmin.User{
+			ID:          buildUID(lakeID),
+			DisplayName: fmt.Sprintf("lake-%s", lakeID),
+			GenerateKey: &generateKey,
+		})
+		if err != nil {
+			if !errors.Is(err, rgwadmin.ErrUserExists) {
+				return rgwadmin.User{}, fmt.Errorf("create rgw user %s: %w", buildUID(lakeID), err)
+			}
+			user, err = a.getLakeUser(ctx, lakeID, false)
+			if err != nil {
+				return rgwadmin.User{}, err
+			}
+		}
+	}
+
+	return a.ensureUserHasKey(ctx, user)
+}
+
+func (a *RGWAdminAPIAdapter) getLakeUserWithKey(ctx context.Context, lakeID string) (rgwadmin.User, error) {
+	user, err := a.getLakeUser(ctx, lakeID, false)
+	if err != nil {
+		return rgwadmin.User{}, err
+	}
+	return a.ensureUserHasKey(ctx, user)
+}
+
+func (a *RGWAdminAPIAdapter) getLakeUser(ctx context.Context, lakeID string, withStats bool) (rgwadmin.User, error) {
+	request := rgwadmin.User{ID: buildUID(lakeID)}
+	if withStats {
+		generateStat := true
+		request.GenerateStat = &generateStat
+	}
+
+	user, err := a.adminClient.GetUser(ctx, request)
+	if err != nil {
+		return rgwadmin.User{}, fmt.Errorf("get rgw user %s: %w", buildUID(lakeID), err)
+	}
+	return user, nil
+}
+
+func (a *RGWAdminAPIAdapter) ensureUserHasKey(ctx context.Context, user rgwadmin.User) (rgwadmin.User, error) {
+	if len(user.Keys) > 0 {
 		return user, nil
 	}
-	if !isAdminAPINotFound(err) {
-		return rgwUserResponse{}, err
-	}
 
-	params := url.Values{}
-	params.Set("uid", uid)
-	params.Set("display-name", displayName)
-
-	body, err := a.adminRequest(ctx, http.MethodPut, "/user", params, nil)
+	generateKey := true
+	_, err := a.adminClient.CreateKey(ctx, rgwadmin.UserKeySpec{
+		UID:         user.ID,
+		KeyType:     "s3",
+		GenerateKey: &generateKey,
+	})
 	if err != nil {
-		return rgwUserResponse{}, fmt.Errorf("create rgw user %s: %w", uid, err)
+		return rgwadmin.User{}, fmt.Errorf("create s3 key for user %s: %w", user.ID, err)
 	}
 
-	var out rgwUserResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return rgwUserResponse{}, fmt.Errorf("parse create user response: %w", err)
-	}
-	return out, nil
-}
-
-func (a *RGWAdminAPIAdapter) getUser(ctx context.Context, uid string) (rgwUserResponse, error) {
-	params := url.Values{}
-	params.Set("uid", uid)
-	body, err := a.adminRequest(ctx, http.MethodGet, "/user", params, nil)
+	refreshedUser, err := a.adminClient.GetUser(ctx, rgwadmin.User{ID: user.ID})
 	if err != nil {
-		return rgwUserResponse{}, err
+		return rgwadmin.User{}, fmt.Errorf("get rgw user %s after key creation: %w", user.ID, err)
 	}
-	var out rgwUserResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return rgwUserResponse{}, fmt.Errorf("parse get user response: %w", err)
+	if len(refreshedUser.Keys) == 0 {
+		return rgwadmin.User{}, fmt.Errorf("no s3 key available for user %s", user.ID)
 	}
-	return out, nil
-}
-
-func (a *RGWAdminAPIAdapter) createS3Key(ctx context.Context, uid string) error {
-	params := url.Values{}
-	params.Set("uid", uid)
-	params.Set("key", "true")
-	params.Set("key-type", "s3")
-	params.Set("generate-key", "true")
-	_, err := a.adminRequest(ctx, http.MethodPut, "/user", params, nil)
-	if err != nil {
-		return fmt.Errorf("create s3 key for user %s: %w", uid, err)
-	}
-	return nil
+	return refreshedUser, nil
 }
 
 func (a *RGWAdminAPIAdapter) ensureBucket(ctx context.Context, s3Client *s3.Client, bucketName string) error {
@@ -259,86 +309,19 @@ func (a *RGWAdminAPIAdapter) newS3Client(ctx context.Context, accessKeyID, secre
 	}), nil
 }
 
-func isAdminAPINotFound(err error) bool {
-	apiErr, ok := err.(*adminAPIError)
-	return ok && apiErr.StatusCode == http.StatusNotFound
-}
-
-func (a *RGWAdminAPIAdapter) setUserQuota(ctx context.Context, uid string, sizeGiB int64) error {
-	if sizeGiB <= 0 {
-		return fmt.Errorf("invalid sizeGiB %d", sizeGiB)
-	}
-	maxSizeKB := sizeGiB * 1024 * 1024
-
-	params := url.Values{}
-	params.Set("uid", uid)
-	params.Set("quota", "true")
-	params.Set("quota-type", "user")
-	params.Set("enabled", "true")
-	params.Set("max-size-kb", fmt.Sprintf("%d", maxSizeKB))
-
-	_, err := a.adminRequest(ctx, http.MethodPut, "/user", params, nil)
-	if err != nil {
-		return fmt.Errorf("set user quota %s: %w", uid, err)
-	}
-	return nil
-}
-
-func (a *RGWAdminAPIAdapter) adminRequest(ctx context.Context, method, resourcePath string, params url.Values, body []byte) ([]byte, error) {
-	if params == nil {
-		params = url.Values{}
-	}
-
-	u, err := url.Parse(a.Endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("invalid rgw endpoint: %w", err)
-	}
-	u.Path = a.AdminPath + resourcePath
-	u.RawQuery = params.Encode()
-
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), bodyReader)
-	if err != nil {
-		return nil, err
-	}
-
-	payloadHash := hashPayload(body)
-	req.Header.Set("x-amz-content-sha256", payloadHash)
-	if err := a.signer.SignHTTP(ctx, a.creds, req, payloadHash, "s3", a.Region, time.Now().UTC()); err != nil {
-		return nil, fmt.Errorf("sign request: %w", err)
-	}
-
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("admin request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return nil, &adminAPIError{StatusCode: resp.StatusCode, Body: string(respBody)}
-	}
-	return respBody, nil
-}
-
-func hashPayload(body []byte) string {
-	h := sha256.New()
-	if len(body) > 0 {
-		h.Write(body)
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 func buildUID(lakeID string) string {
 	id := strings.ToLower(strings.ReplaceAll(lakeID, "-", ""))
 	if len(id) > 20 {
 		id = id[:20]
 	}
 	return "lake-" + id
+}
+
+func uint64PtrToInt64(v *uint64) int64 {
+	if v == nil {
+		return 0
+	}
+	return int64(*v)
 }
 
 var _ Adapter = (*RGWAdminAPIAdapter)(nil)

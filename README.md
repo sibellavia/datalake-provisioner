@@ -10,7 +10,7 @@ Implemented:
 - Go API service with Chi
 - PostgreSQL persistence for lakes/operations
 - Durable background operation runner backed by PostgreSQL
-- Ceph **RGW Admin Ops API** adapter (no CLI dependency)
+- Ceph **RGW Admin Ops API** adapter via `github.com/ceph/go-ceph/rgw/admin` (no CLI dependency)
 - OpenAPI contract (`api/openapi.yaml`)
 
 Operational runbook:
@@ -58,7 +58,7 @@ datalake-provisioner/
 
 ### Ceph RGW Admin API
 - `RGW_ENDPOINT` (e.g. `http://rook-ceph-rgw...:8080`)
-- `RGW_ADMIN_PATH` (default: `/admin`)
+- `RGW_ADMIN_PATH` (default and currently required: `/admin`)
 - `RGW_REGION` (default: `us-east-1`)
 - `RGW_ACCESS_KEY_ID` (admin user)
 - `RGW_SECRET_ACCESS_KEY` (admin user)

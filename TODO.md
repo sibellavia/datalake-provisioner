@@ -189,8 +189,8 @@ Do this immediately after P0 is in place.
 #### 6. Refactor the RGW adapter for explicit lake vs bucket operations
 **Why:** the current adapter still assumes one bucket derived from `lakeId`.
 
-- [ ] Split lake/account operations from bucket operations
-- [ ] Add explicit methods for:
+- [x] Split lake/account operations from bucket operations
+- [x] Add explicit methods for:
   - ensuring lake user/account
   - ensuring lake keys
   - setting lake quota
@@ -198,8 +198,15 @@ Do this immediately after P0 is in place.
   - deleting bucket if empty
   - querying user usage
   - querying bucket usage
-- [ ] Remove implicit `buildBucketName(lakeID)` assumptions from the main provisioning path
-- [ ] Keep AWS S3 SDK for S3 data-plane bucket operations
+- [x] Remove implicit `buildBucketName(lakeID)` assumptions from the main provisioning path
+- [x] Keep AWS S3 SDK for S3 data-plane bucket operations
+- [x] Adopt `github.com/ceph/go-ceph/rgw/admin` for RGW Admin Ops where it reduces custom code
+- [x] Standardize on `/admin` as the supported RGW Admin Ops path for this integration
+
+**Implementation note**
+- The adapter now uses:
+  - `go-ceph/rgw/admin` for RGW Admin Ops (users, keys, quota, usage, bucket admin metadata)
+  - AWS SDK v2 for S3-compatible bucket operations
 
 **Done when**
 - The adapter can manage a lake with zero or many buckets
@@ -368,21 +375,17 @@ These features make the service feel more like a complete managed object storage
 
 ---
 
-#### 19. Evaluate `go-ceph/rgw/admin` to reduce custom Admin Ops code
-**Why:** after the multi-bucket model is in place, we may be able to reduce some of our custom RGW Admin Ops implementation while keeping our internal adapter.
+#### 19. Re-evaluate broader `go-ceph/rgw/admin` usage only if needed
+**Status:** core RGW Admin Ops adoption was already done during the adapter refactor in P1.
 
-- [ ] Evaluate replacing custom RGW Admin Ops request/signing code with `github.com/ceph/go-ceph/rgw/admin`
-- [ ] Keep AWS S3 SDK for bucket create/head/delete and other S3 data-plane operations
-- [ ] Validate compatibility with our RGW endpoint behavior, especially:
-  - fixed `/admin` path assumption in the library
-  - signing/auth behavior against our Ceph RGW deployment
-  - user/key/quota/bucket-info APIs we rely on
-- [ ] Adopt only if it reduces maintenance without breaking working behavior
+- [x] Use `github.com/ceph/go-ceph/rgw/admin` for core RGW Admin Ops in our internal adapter
+- [x] Keep AWS S3 SDK for bucket create/head/delete and other S3 data-plane operations
+- [x] Accept `/admin` as the supported admin path for this integration
+- [ ] Revisit only if future RGW Admin Ops surface area still leaves too much custom code
 
 **Notes**
-- This is an internal refactor candidate, not a product milestone.
-- It should come **after** multi-bucket work, not before it.
-- We should keep our own `ceph.Adapter` abstraction even if we replace some internals.
+- This remains an internal implementation concern, not a product milestone.
+- We should keep our own `ceph.Adapter` abstraction even when using `go-ceph` internally.
 
 ---
 
@@ -392,8 +395,8 @@ These features make the service feel more like a complete managed object storage
 2. [ ] **PR-2**: Minimal durable operation runner (implemented, restart-recovery validation pending)
 3. [x] **PR-3**: Idempotency + typed errors / API correctness
 4. [x] **PR-4**: State machine / concurrency guards
-5. [ ] **PR-5**: Clean multi-bucket schema / domain model (empty lake by default)
-6. [ ] **PR-6**: RGW adapter refactor for explicit lake vs bucket operations
+5. [x] **PR-5**: Clean multi-bucket schema / domain model (empty lake by default)
+6. [x] **PR-6**: RGW adapter refactor for explicit lake vs bucket operations
 7. [ ] **PR-7**: Bucket lifecycle APIs + worker operations
 8. [ ] **PR-8**: Lake usage, bucket usage, and fleet-wide totals
 9. [ ] **PR-9**: Retries / timeouts / error classification

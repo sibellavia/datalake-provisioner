@@ -2,19 +2,28 @@ package ceph
 
 import "context"
 
-type ProvisionInput struct {
-	LakeID   string
-	TenantID string
-	UserID   string
-	SizeGiB  int64
-}
-
-type ProvisionOutput struct {
+type LakeAccess struct {
 	RGWUser string
 }
 
+type LakeUsage struct {
+	UsedBytes   int64
+	ObjectCount int64
+}
+
+type BucketUsage struct {
+	UsedBytes   int64
+	ObjectCount int64
+}
+
 type Adapter interface {
-	Provision(ctx context.Context, in ProvisionInput) (ProvisionOutput, error)
-	Resize(ctx context.Context, lakeID string, sizeGiB int64) error
-	Deprovision(ctx context.Context, lakeID string) error
+	EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error)
+	SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) error
+	DeleteLake(ctx context.Context, lakeID string) error
+
+	CreateBucket(ctx context.Context, lakeID, bucketName string) error
+	DeleteBucketIfEmpty(ctx context.Context, lakeID, bucketName string) error
+
+	GetLakeUsage(ctx context.Context, lakeID string) (LakeUsage, error)
+	GetBucketUsage(ctx context.Context, bucketName string) (BucketUsage, error)
 }

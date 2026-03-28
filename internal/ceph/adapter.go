@@ -26,4 +26,5 @@ type Adapter interface {
 
 	GetLakeUsage(ctx context.Context, lakeID string) (LakeUsage, error)
 	GetBucketUsage(ctx context.Context, bucketName string) (BucketUsage, error)
+	ListLakeBucketUsage(ctx context.Context, lakeID string) (map[string]BucketUsage, error)
 }

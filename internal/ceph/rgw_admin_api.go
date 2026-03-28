@@ -161,15 +161,27 @@ func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName stri
 		return BucketUsage{}, fmt.Errorf("get bucket info %s: %w", bucketName, err)
 	}
 
-	usedBytes := uint64PtrToInt64(bucket.Usage.RgwMain.Size)
-	if usedBytes == 0 {
-		usedBytes = uint64PtrToInt64(bucket.Usage.RgwMain.SizeActual)
-	}
-
 	return BucketUsage{
-		UsedBytes:   usedBytes,
+		UsedBytes:   uint64PtrToInt64(bucket.Usage.RgwMain.Size),
 		ObjectCount: uint64PtrToInt64(bucket.Usage.RgwMain.NumObjects),
 	}, nil
+}
+
+func (a *RGWAdminAPIAdapter) ListLakeBucketUsage(ctx context.Context, lakeID string) (map[string]BucketUsage, error) {
+	uid := buildUID(lakeID)
+	buckets, err := a.adminClient.ListUsersBucketsWithStat(ctx, uid)
+	if err != nil {
+		return nil, fmt.Errorf("list buckets with stats for user %s: %w", uid, err)
+	}
+
+	usageByBucket := make(map[string]BucketUsage, len(buckets))
+	for _, bucket := range buckets {
+		usageByBucket[bucket.Bucket] = BucketUsage{
+			UsedBytes:   uint64PtrToInt64(bucket.Usage.RgwMain.Size),
+			ObjectCount: uint64PtrToInt64(bucket.Usage.RgwMain.NumObjects),
+		}
+	}
+	return usageByBucket, nil
 }
 
 func (a *RGWAdminAPIAdapter) ensureLakeUserWithKey(ctx context.Context, lakeID string) (rgwadmin.User, error) {

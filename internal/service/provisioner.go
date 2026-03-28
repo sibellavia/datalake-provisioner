@@ -23,6 +23,10 @@ type Repository interface {
 	MarkLakeDeleted(ctx context.Context, lakeID, tenantID string) error
 	MarkLakeFailed(ctx context.Context, lakeID, tenantID, errorMessage string) error
 	CountNonDeletedBuckets(ctx context.Context, lakeID, tenantID string) (int, error)
+	CountActiveLakes(ctx context.Context) (int, error)
+	CountActiveBuckets(ctx context.Context) (int, error)
+	SumCommittedQuotaBytes(ctx context.Context) (int64, error)
+	ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
 
 	StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartBucketCreateOperation(ctx context.Context, bucket domain.Bucket, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
@@ -573,22 +577,55 @@ func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID st
 }
 
 func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error) {
+	if s.Ceph == nil {
+		return domain.Lake{}, fmt.Errorf("ceph adapter not configured")
+	}
+
 	lake, err := s.Repo.GetLake(ctx, lakeID, tenantID)
 	if err != nil {
 		return domain.Lake{}, fmt.Errorf("get lake: %w", err)
 	}
+
+	bucketCount, err := s.Repo.CountNonDeletedBuckets(ctx, lakeID, tenantID)
+	if err != nil {
+		return domain.Lake{}, fmt.Errorf("count lake buckets: %w", err)
+	}
+	usage, err := s.Ceph.GetLakeUsage(ctx, lakeID)
+	if err != nil {
+		return domain.Lake{}, fmt.Errorf("get lake usage: %w", err)
+	}
+
+	lake.BucketCount = bucketCount
+	lake.UsedBytes = usage.UsedBytes
+	lake.ObjectCount = usage.ObjectCount
 	return lake, nil
 }
 
 func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (domain.Bucket, error) {
+	if s.Ceph == nil {
+		return domain.Bucket{}, fmt.Errorf("ceph adapter not configured")
+	}
+
 	bucket, err := s.Repo.GetBucket(ctx, bucketID, lakeID, tenantID)
 	if err != nil {
 		return domain.Bucket{}, fmt.Errorf("get bucket: %w", err)
 	}
+
+	usage, err := s.Ceph.GetBucketUsage(ctx, bucket.BucketName)
+	if err != nil {
+		return domain.Bucket{}, fmt.Errorf("get bucket usage: %w", err)
+	}
+
+	bucket.UsedBytes = usage.UsedBytes
+	bucket.ObjectCount = usage.ObjectCount
 	return bucket, nil
 }
 
 func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) ([]domain.Bucket, error) {
+	if s.Ceph == nil {
+		return nil, fmt.Errorf("ceph adapter not configured")
+	}
+
 	if _, err := s.Repo.GetLake(ctx, lakeID, tenantID); err != nil {
 		return nil, fmt.Errorf("get lake: %w", err)
 	}
@@ -596,5 +633,54 @@ func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) 
 	if err != nil {
 		return nil, fmt.Errorf("list buckets: %w", err)
 	}
+
+	usageByBucket, err := s.Ceph.ListLakeBucketUsage(ctx, lakeID)
+	if err != nil {
+		return nil, fmt.Errorf("list lake bucket usage: %w", err)
+	}
+	for i := range buckets {
+		if usage, ok := usageByBucket[buckets[i].BucketName]; ok {
+			buckets[i].UsedBytes = usage.UsedBytes
+			buckets[i].ObjectCount = usage.ObjectCount
+		}
+	}
 	return buckets, nil
+}
+
+func (s *Provisioner) GetFleetUsageSummary(ctx context.Context) (domain.FleetUsageSummary, error) {
+	if s.Ceph == nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("ceph adapter not configured")
+	}
+
+	lakeCount, err := s.Repo.CountActiveLakes(ctx)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("count active lakes: %w", err)
+	}
+	bucketCount, err := s.Repo.CountActiveBuckets(ctx)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("count active buckets: %w", err)
+	}
+	totalCommittedBytes, err := s.Repo.SumCommittedQuotaBytes(ctx)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("sum committed quota: %w", err)
+	}
+	lakes, err := s.Repo.ListActiveLakes(ctx)
+	if err != nil {
+		return domain.FleetUsageSummary{}, fmt.Errorf("list active lakes: %w", err)
+	}
+
+	summary := domain.FleetUsageSummary{
+		LakeCount:           lakeCount,
+		BucketCount:         bucketCount,
+		TotalCommittedBytes: totalCommittedBytes,
+	}
+	for _, lake := range lakes {
+		usage, err := s.Ceph.GetLakeUsage(ctx, lake.LakeID)
+		if err != nil {
+			return domain.FleetUsageSummary{}, fmt.Errorf("get lake usage for %s: %w", lake.LakeID, err)
+		}
+		summary.TotalUsedBytes += usage.UsedBytes
+		summary.TotalObjectCount += usage.ObjectCount
+	}
+	return summary, nil
 }

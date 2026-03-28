@@ -26,6 +26,20 @@ Helm chart (k3s lab):
 Not implemented yet:
 - Kubernetes deployment automation for UI/backend
 
+## Architecture principle: source of truth
+- **PostgreSQL** is the source of truth for the **product model**:
+  - lake existence
+  - bucket existence as product resources
+  - tenant mapping
+  - lifecycle/status metadata
+  - committed quota in the control-plane
+- **Ceph RGW** is the source of truth for **physical storage facts**:
+  - actual user/bucket presence
+  - configured quota state
+  - ownership
+  - usage bytes/object counts
+- If DB and RGW diverge, that is **drift to detect/reconcile**, not a reason to derive the product inventory from RGW alone.
+
 ## Project structure
 
 ```text

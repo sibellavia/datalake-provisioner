@@ -57,6 +57,20 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /v1/stats/summary:
+    get:
+      summary: Get fleet usage summary across all lakes
+      operationId: getFleetUsageSummary
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+      responses:
+        '200':
+          description: Fleet usage summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetUsageSummary'
+
   /v1/lakes/{lakeId}:
     get:
       summary: Get data lake details
@@ -338,6 +352,15 @@ components:
           enum: [provisioning, ready, resizing, deleting, failed, deleted]
         rgwUser:
           type: string
+        bucketCount:
+          type: integer
+          format: int32
+        usedBytes:
+          type: integer
+          format: int64
+        objectCount:
+          type: integer
+          format: int64
         lastError:
           type: string
         createdAt:
@@ -363,6 +386,12 @@ components:
         status:
           type: string
           enum: [creating, ready, deleting, failed, deleted]
+        usedBytes:
+          type: integer
+          format: int64
+        objectCount:
+          type: integer
+          format: int64
         lastError:
           type: string
         createdAt:
@@ -371,6 +400,25 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    FleetUsageSummary:
+      type: object
+      properties:
+        lakeCount:
+          type: integer
+          format: int32
+        bucketCount:
+          type: integer
+          format: int32
+        totalUsedBytes:
+          type: integer
+          format: int64
+        totalCommittedBytes:
+          type: integer
+          format: int64
+        totalObjectCount:
+          type: integer
+          format: int64
 
     Operation:
       type: object

@@ -114,6 +114,72 @@ func (r *Repository) CountNonDeletedBuckets(ctx context.Context, lakeID, tenantI
 	return count, err
 }
 
+func (r *Repository) CountActiveLakes(ctx context.Context) (int, error) {
+	var count int
+	err := r.DB.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM lakes
+		WHERE status <> 'deleted'
+	`).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) CountActiveBuckets(ctx context.Context) (int, error) {
+	var count int
+	err := r.DB.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM buckets
+		WHERE status <> 'deleted'
+	`).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) SumCommittedQuotaBytes(ctx context.Context) (int64, error) {
+	var total int64
+	err := r.DB.QueryRow(ctx, `
+		SELECT COALESCE(SUM(requested_size_gib * 1024 * 1024 * 1024), 0)::bigint
+		FROM lakes
+		WHERE status <> 'deleted'
+	`).Scan(&total)
+	return total, err
+}
+
+func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
+		FROM lakes
+		WHERE status <> 'deleted'
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	lakes := make([]domain.Lake, 0)
+	for rows.Next() {
+		var lake domain.Lake
+		if err := rows.Scan(
+			&lake.LakeID,
+			&lake.TenantID,
+			&lake.UserID,
+			&lake.RequestedSizeGiB,
+			&lake.Status,
+			&lake.RGWUser,
+			&lake.LastError,
+			&lake.CreatedAt,
+			&lake.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		lakes = append(lakes, lake)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return lakes, nil
+}
+
 func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {
 	if idempotencyKey != "" {
 		existingOp, found, err := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)

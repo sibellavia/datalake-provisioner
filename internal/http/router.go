@@ -12,6 +12,7 @@ type Deps struct {
 	InternalToken string
 	LakesHandler  *handlers.LakesHandler
 	OpsHandler    *handlers.OperationsHandler
+	StatsHandler  *handlers.StatsHandler
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -26,6 +27,8 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(handlers.InternalTokenMiddleware(d.InternalToken))
 		v1.Use(handlers.TenantMiddleware)
+
+		v1.Get("/stats/summary", d.StatsHandler.GetSummary)
 
 		v1.Post("/lakes", d.LakesHandler.Provision)
 		v1.Post("/lakes/{lakeId}/resize", d.LakesHandler.Resize)

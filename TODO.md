@@ -291,6 +291,10 @@ Do this immediately after P0 is in place.
 ### P2 — production hardening around the multi-bucket model
 These items should follow immediately after the core multi-bucket model exists.
 
+**Current sequencing choice**
+- We are intentionally prioritizing **P2.10 observability/readiness** before **P2.9 retries/timeouts/error classification**.
+- Reason: better logs, metrics, traces, and readiness checks will make later retry/timeout tuning much safer and faster.
+
 #### 9. Improve retries / timeouts / error classification
 - [ ] Add per-operation timeout budget
 - [ ] Add Ceph / RGW request timeouts
@@ -305,15 +309,51 @@ These items should follow immediately after the core multi-bucket model exists.
 ---
 
 #### 10. Add observability and readiness
-- [ ] Add `/ready` endpoint that checks DB + RGW reachability
-- [ ] Keep `/health` as lightweight liveness endpoint
-- [ ] Switch to structured logging (`operationId`, `lakeId`, `bucketId`, `tenantId`, `siteId`, `attempt`)
+**Stack direction**
+- Use **OpenTelemetry** as the tracing/telemetry standard.
+- Expose **Prometheus** metrics via `/metrics`.
+- Emit structured **JSON logs to stdout** and let the platform ship them to **OpenSearch**.
+- Keep observability aligned with the platform stack already in use.
+
+- [x] Add `/ready` endpoint that checks DB + RGW reachability
+- [x] Keep `/health` as lightweight liveness endpoint
+- [x] Switch to structured logging (`operationId`, `lakeId`, `bucketId`, `tenantId`, `siteId`, `attempt`)
 - [ ] Add Prometheus metrics for operations, duration, retries, failures
 - [ ] Add request correlation across API and worker paths
+- [ ] Add OpenTelemetry tracing for HTTP, worker, and Ceph adapter paths
+- [ ] Persist and propagate async trace context across API -> operation payload -> worker execution
+
+**Implementation split**
+- [x] **PR-A**: structured JSON logs + `/ready`
+  - use `slog` JSON logging
+  - add request/operation correlation fields
+  - add `/ready` for DB + RGW dependency checks
+- [ ] **PR-B**: Prometheus metrics
+  - add `/metrics`
+  - instrument HTTP, worker, operation, and Ceph adapter metrics
+  - keep metric labels low-cardinality
+- [ ] **PR-C**: OpenTelemetry tracing
+  - add OTLP exporter/config
+  - instrument HTTP, worker, service, and Ceph spans
+  - propagate `traceparent` / `tracestate` across async execution
+
+**Notes**
+- Do **not** push logs directly to OpenSearch from this service.
+- Keep OpenSearch integration in the platform log pipeline.
+- Use DB for inventory/context and RGW for physical/storage attributes inside traces/logs where relevant.
+
+**Validation completed so far**
+- Live validation on `lks` confirmed:
+  - `/ready` returns `ready` when both DB and RGW are reachable
+  - logs are emitted as structured JSON to stdout
+  - HTTP request logs now include request IDs and route/status/duration fields
+  - service/worker logs now include structured operation/lake/bucket context
 
 **Done when**
 - Operators can answer: what failed, where, why, and for which tenant/lake/bucket
 - Kubernetes readiness reflects real service dependencies
+- Prometheus can scrape service metrics
+- API -> worker -> Ceph execution can be followed through one trace
 
 ---
 
@@ -442,13 +482,15 @@ These features make the service feel more like a complete managed object storage
 6. [x] **PR-6**: RGW adapter refactor for explicit lake vs bucket operations
 7. [x] **PR-7**: Bucket lifecycle APIs + worker operations
 8. [x] **PR-8**: Lake usage, bucket usage, and fleet-wide totals
-9. [ ] **PR-9**: Retries / timeouts / error classification
-10. [ ] **PR-10**: Observability / readiness / metrics
-11. [ ] **PR-11**: Security hardening for Kong deployment model
-12. [ ] **PR-12**: Deployment + multi-DC configuration
-13. [ ] **PR-13**: Usage sync + capacity reporting
-14. [ ] **PR-14**: Reconciliation / drift detection
-15. [ ] **PR-15+**: Credentials, lifecycle, policies, richer product features
+9. [x] **PR-A**: Observability foundation (structured JSON logs + `/ready`)
+10. [ ] **PR-B**: Prometheus metrics
+11. [ ] **PR-C**: OpenTelemetry tracing + async trace propagation
+12. [ ] **PR-9**: Retries / timeouts / error classification (deferred for now)
+13. [ ] **PR-11**: Security hardening for Kong deployment model
+14. [ ] **PR-12**: Deployment + multi-DC configuration
+15. [ ] **PR-13**: Usage sync + capacity reporting
+16. [ ] **PR-14**: Reconciliation / drift detection
+17. [ ] **PR-15+**: Credentials, lifecycle, policies, richer product features
 
 ---
 
@@ -473,6 +515,6 @@ The next major milestone is complete when all of the following are true:
 - [x] Per-lake usage is exposed from RGW user stats
 - [x] Per-bucket usage is exposed from bucket stats
 - [x] **Global total usage across all lakes** is available
-- [ ] Basic DB / RGW readiness is visible
-- [ ] Basic structured operation logs exist
+- [x] Basic DB / RGW readiness is visible
+- [x] Basic structured operation logs exist
 

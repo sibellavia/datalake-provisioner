@@ -66,6 +66,13 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	}, nil
 }
 
+func (a *RGWAdminAPIAdapter) CheckReady(ctx context.Context) error {
+	if _, err := a.adminClient.GetUsers(ctx); err != nil {
+		return fmt.Errorf("rgw admin readiness check failed: %w", err)
+	}
+	return nil
+}
+
 func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error) {
 	user, err := a.ensureLakeUserWithKey(ctx, lakeID)
 	if err != nil {

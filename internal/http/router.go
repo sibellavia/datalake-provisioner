@@ -6,10 +6,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/movincloud/datalake-provisioner/internal/http/handlers"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 type Deps struct {
 	InternalToken string
+	ReadyHandler  *handlers.ReadyHandler
 	LakesHandler  *handlers.LakesHandler
 	OpsHandler    *handlers.OperationsHandler
 	StatsHandler  *handlers.StatsHandler
@@ -20,9 +22,10 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Logger)
+	r.Use(observability.RequestLoggingMiddleware)
 
 	r.Get("/health", handlers.Health)
+	r.Get("/ready", d.ReadyHandler.GetReady)
 
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(handlers.InternalTokenMiddleware(d.InternalToken))

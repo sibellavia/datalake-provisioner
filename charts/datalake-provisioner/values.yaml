@@ -46,6 +46,9 @@ securityContext:
 provisioner:
   httpPort: "8081"
   readHeaderTimeoutSeconds: "5"
+  readyTimeoutSeconds: "3"
+  logFormat: "json"
+  logLevel: "info"
   workerEnabled: "true"
   workerPollIntervalSeconds: "2"
   workerStaleAfterSeconds: "120"

@@ -49,12 +49,14 @@ func New(ctx context.Context) (*App, error) {
 		Ceph: cephAdapter,
 	}
 
+	readyHandler := &handlers.ReadyHandler{DB: db, Ceph: cephAdapter, Timeout: cfg.ReadyTimeout}
 	lakesHandler := &handlers.LakesHandler{Provisioner: prov}
 	opsHandler := &handlers.OperationsHandler{Provisioner: prov}
 	statsHandler := &handlers.StatsHandler{Provisioner: prov}
 
 	router := httpapi.NewRouter(httpapi.Deps{
 		InternalToken: cfg.InternalToken,
+		ReadyHandler:  readyHandler,
 		LakesHandler:  lakesHandler,
 		OpsHandler:    opsHandler,
 		StatsHandler:  statsHandler,

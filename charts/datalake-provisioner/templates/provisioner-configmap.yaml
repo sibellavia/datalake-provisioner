@@ -7,6 +7,9 @@ metadata:
 data:
   HTTP_PORT: {{ .Values.provisioner.httpPort | quote }}
   READ_HEADER_TIMEOUT_SECONDS: {{ .Values.provisioner.readHeaderTimeoutSeconds | quote }}
+  READY_TIMEOUT_SECONDS: {{ .Values.provisioner.readyTimeoutSeconds | quote }}
+  LOG_FORMAT: {{ .Values.provisioner.logFormat | quote }}
+  LOG_LEVEL: {{ .Values.provisioner.logLevel | quote }}
   WORKER_ENABLED: {{ .Values.provisioner.workerEnabled | quote }}
   WORKER_POLL_INTERVAL_SECONDS: {{ .Values.provisioner.workerPollIntervalSeconds | quote }}
   WORKER_STALE_AFTER_SECONDS: {{ .Values.provisioner.workerStaleAfterSeconds | quote }}

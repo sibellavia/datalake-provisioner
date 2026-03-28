@@ -2,21 +2,29 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os/signal"
 	"syscall"
 
 	"github.com/movincloud/datalake-provisioner/internal/app"
+	"github.com/movincloud/datalake-provisioner/internal/config"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 func main() {
+	cfg := config.Load()
+	if err := observability.SetupLogger(cfg.LogFormat, cfg.LogLevel); err != nil {
+		panic(err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	application, err := app.New(ctx)
 	if err != nil {
-		log.Fatalf("bootstrap error: %v", err)
+		slog.Error("bootstrap error", "component", "main", "error.message", err.Error())
+		panic(err)
 	}
 	defer application.Close()
 
@@ -31,8 +39,9 @@ func main() {
 		_ = server.Shutdown(context.Background())
 	}()
 
-	log.Printf("datalake-provisioner listening on :%s", application.Config.HTTPPort)
+	slog.Info("server listening", "component", "main", "http.addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("http server error: %v", err)
+		slog.Error("http server error", "component", "main", "error.message", err.Error())
+		panic(err)
 	}
 }

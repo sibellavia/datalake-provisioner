@@ -63,6 +63,9 @@ datalake-provisioner/
 ## Environment variables
 - `HTTP_PORT` (default: `8081`)
 - `READ_HEADER_TIMEOUT_SECONDS` (default: `5`)
+- `READY_TIMEOUT_SECONDS` (default: `3`)
+- `LOG_FORMAT` (`json|text`, default: `json`)
+- `LOG_LEVEL` (`debug|info|warn|error`, default: `info`)
 - `DATABASE_URL` (default local postgres URL)
 - `INTERNAL_TOKEN` (required in real deployments)
 - `WORKER_ENABLED` (default: `true`)
@@ -82,6 +85,14 @@ datalake-provisioner/
 - `X-Internal-Token`: shared internal token
 - `X-Tenant`: tenant context header
 - `Idempotency-Key`: optional header supported on create/resize/delete operations
+
+## Health and readiness
+- `/health`: lightweight liveness endpoint
+- `/ready`: dependency readiness endpoint (DB + RGW)
+
+## Logging
+- Service logs are emitted as structured JSON to stdout by default.
+- The intended production model is for the platform log pipeline to ship those logs to OpenSearch.
 
 ## Provision flow (implemented)
 1. `POST /v1/lakes`

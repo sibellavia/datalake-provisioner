@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,7 +31,7 @@ type Runner struct {
 
 func (r *Runner) Run(ctx context.Context) {
 	if r == nil || r.DB == nil || r.Service == nil {
-		log.Printf("worker disabled: missing db or service")
+		slog.WarnContext(ctx, "worker disabled: missing db or service", "component", "worker")
 		return
 	}
 	if r.PollInterval <= 0 {
@@ -57,7 +57,7 @@ func (r *Runner) Run(ctx context.Context) {
 		if leaderConn == nil {
 			conn, err := r.tryAcquireLeadership(ctx)
 			if err != nil {
-				log.Printf("worker leadership acquire failed: %v", err)
+				slog.ErrorContext(ctx, "worker leadership acquire failed", "component", "worker", "error.message", err.Error())
 				r.sleep(ctx, r.PollInterval)
 				continue
 			}
@@ -66,11 +66,11 @@ func (r *Runner) Run(ctx context.Context) {
 				continue
 			}
 			leaderConn = conn
-			log.Printf("worker leadership acquired")
+			slog.InfoContext(ctx, "worker leadership acquired", "component", "worker")
 		}
 
 		if err := r.ensureLeadership(ctx, leaderConn); err != nil {
-			log.Printf("worker leadership lost: %v", err)
+			slog.ErrorContext(ctx, "worker leadership lost", "component", "worker", "error.message", err.Error())
 			r.releaseLeadership(context.Background(), leaderConn)
 			leaderConn = nil
 			r.sleep(ctx, r.PollInterval)
@@ -79,16 +79,16 @@ func (r *Runner) Run(ctx context.Context) {
 
 		staleBefore := time.Now().UTC().Add(-r.StaleAfter)
 		if count, err := r.Service.ResetStaleRunningOperations(ctx, staleBefore); err != nil {
-			log.Printf("worker stale reset failed: %v", err)
+			slog.ErrorContext(ctx, "worker stale reset failed", "component", "worker", "error.message", err.Error())
 			r.sleep(ctx, r.PollInterval)
 			continue
 		} else if count > 0 {
-			log.Printf("worker reset %d stale running operation(s)", count)
+			slog.InfoContext(ctx, "worker reset stale running operations", "component", "worker", "count", count)
 		}
 
 		op, ok, err := r.Service.ClaimNextRunnableOperation(ctx)
 		if err != nil {
-			log.Printf("worker claim failed: %v", err)
+			slog.ErrorContext(ctx, "worker claim failed", "component", "worker", "error.message", err.Error())
 			r.sleep(ctx, r.PollInterval)
 			continue
 		}
@@ -97,22 +97,55 @@ func (r *Runner) Run(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("worker claimed op=%s type=%s tenant=%s lake=%s bucket=%s attempt=%d", op.OperationID, op.OperationType, op.TenantID, op.LakeID, op.BucketID, op.AttemptCount)
+		slog.InfoContext(ctx, "worker claimed operation",
+			"component", "worker",
+			"operation.id", op.OperationID,
+			"operation.type", op.OperationType,
+			"tenant.id", op.TenantID,
+			"lake.id", op.LakeID,
+			"bucket.id", op.BucketID,
+			"attempt", op.AttemptCount,
+		)
 		if err := r.Service.ExecuteOperation(ctx, op); err != nil {
 			if op.AttemptCount >= r.MaxAttempts {
-				log.Printf("worker failing op=%s permanently after %d attempt(s): %v", op.OperationID, op.AttemptCount, err)
+				slog.ErrorContext(ctx, "worker failing operation permanently",
+					"component", "worker",
+					"operation.id", op.OperationID,
+					"operation.type", op.OperationType,
+					"attempt", op.AttemptCount,
+					"error.message", err.Error(),
+				)
 				if markErr := r.Service.MarkOperationExecutionFailed(ctx, op, err); markErr != nil {
-					log.Printf("worker failed to mark final failure op=%s: %v", op.OperationID, markErr)
+					slog.ErrorContext(ctx, "worker failed to mark final failure",
+						"component", "worker",
+						"operation.id", op.OperationID,
+						"error.message", markErr.Error(),
+					)
 				}
 				continue
 			}
 
 			nextAttemptAt := time.Now().UTC().Add(retryDelay(op.AttemptCount))
-			log.Printf("worker requeueing op=%s attempt=%d nextAttemptAt=%s err=%v", op.OperationID, op.AttemptCount, nextAttemptAt.Format(time.RFC3339), err)
+			slog.WarnContext(ctx, "worker requeueing operation",
+				"component", "worker",
+				"operation.id", op.OperationID,
+				"operation.type", op.OperationType,
+				"attempt", op.AttemptCount,
+				"next_attempt_at", nextAttemptAt.Format(time.RFC3339),
+				"error.message", err.Error(),
+			)
 			if requeueErr := r.Service.RequeueOperation(ctx, op, err, nextAttemptAt); requeueErr != nil {
-				log.Printf("worker failed to requeue op=%s: %v", op.OperationID, requeueErr)
+				slog.ErrorContext(ctx, "worker failed to requeue operation",
+					"component", "worker",
+					"operation.id", op.OperationID,
+					"error.message", requeueErr.Error(),
+				)
 				if markErr := r.Service.MarkOperationExecutionFailed(ctx, op, fmt.Errorf("requeue failed after execution error %v: %w", requeueErr, err)); markErr != nil {
-					log.Printf("worker failed to mark fallback failure op=%s: %v", op.OperationID, markErr)
+					slog.ErrorContext(ctx, "worker failed to mark fallback failure",
+						"component", "worker",
+						"operation.id", op.OperationID,
+						"error.message", markErr.Error(),
+					)
 				}
 			}
 		}

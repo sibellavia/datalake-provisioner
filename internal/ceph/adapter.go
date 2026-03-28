@@ -17,6 +17,7 @@ type BucketUsage struct {
 }
 
 type Adapter interface {
+	CheckReady(ctx context.Context) error
 	EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error)
 	SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) error
 	DeleteLake(ctx context.Context, lakeID string) error

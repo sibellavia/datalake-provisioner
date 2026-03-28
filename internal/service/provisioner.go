@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -366,7 +366,15 @@ func (s *Provisioner) RequeueOperation(ctx context.Context, op domain.Operation,
 
 func (s *Provisioner) MarkOperationExecutionFailed(ctx context.Context, op domain.Operation, err error) error {
 	errorMessage := err.Error()
-	log.Printf("operation failed op=%s type=%s lake=%s bucket=%s tenant=%s: %s", op.OperationID, op.OperationType, op.LakeID, op.BucketID, op.TenantID, errorMessage)
+	slog.ErrorContext(ctx, "operation execution failed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", op.TenantID,
+		"lake.id", op.LakeID,
+		"bucket.id", op.BucketID,
+		"error.message", errorMessage,
+	)
 
 	var joinErr error
 	switch op.OperationType {
@@ -456,7 +464,14 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("provision completed op=%s lake=%s tenant=%s rgwUser=%s", op.OperationID, payload.LakeID, payload.TenantID, lakeAccess.RGWUser)
+	slog.InfoContext(ctx, "provision completed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", payload.TenantID,
+		"lake.id", payload.LakeID,
+		"rgw.user", lakeAccess.RGWUser,
+	)
 	return nil
 }
 
@@ -483,7 +498,14 @@ func (s *Provisioner) executeResize(ctx context.Context, op domain.Operation, pa
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("resize completed op=%s lake=%s tenant=%s sizeGiB=%d", op.OperationID, payload.LakeID, payload.TenantID, payload.SizeGiB)
+	slog.InfoContext(ctx, "resize completed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", payload.TenantID,
+		"lake.id", payload.LakeID,
+		"requested_size_gib", payload.SizeGiB,
+	)
 	return nil
 }
 
@@ -510,7 +532,13 @@ func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operatio
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("deprovision completed op=%s lake=%s tenant=%s", op.OperationID, payload.LakeID, payload.TenantID)
+	slog.InfoContext(ctx, "deprovision completed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", payload.TenantID,
+		"lake.id", payload.LakeID,
+	)
 	return nil
 }
 
@@ -532,7 +560,15 @@ func (s *Provisioner) executeCreateBucket(ctx context.Context, op domain.Operati
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("bucket create completed op=%s lake=%s bucket=%s bucketName=%s tenant=%s", op.OperationID, payload.LakeID, payload.BucketID, payload.BucketName, payload.TenantID)
+	slog.InfoContext(ctx, "bucket create completed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", payload.TenantID,
+		"lake.id", payload.LakeID,
+		"bucket.id", payload.BucketID,
+		"bucket.name", payload.BucketName,
+	)
 	return nil
 }
 
@@ -557,7 +593,15 @@ func (s *Provisioner) executeDeleteBucket(ctx context.Context, op domain.Operati
 		return fmt.Errorf("mark operation success: %w", err)
 	}
 
-	log.Printf("bucket delete completed op=%s lake=%s bucket=%s bucketName=%s tenant=%s", op.OperationID, payload.LakeID, payload.BucketID, payload.BucketName, payload.TenantID)
+	slog.InfoContext(ctx, "bucket delete completed",
+		"component", "service",
+		"operation.id", op.OperationID,
+		"operation.type", op.OperationType,
+		"tenant.id", payload.TenantID,
+		"lake.id", payload.LakeID,
+		"bucket.id", payload.BucketID,
+		"bucket.name", payload.BucketName,
+	)
 	return nil
 }
 

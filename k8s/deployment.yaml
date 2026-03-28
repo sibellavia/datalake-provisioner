@@ -29,7 +29,7 @@ spec:
                 name: datalake-provisioner-secrets
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8081
             initialDelaySeconds: 5
             periodSeconds: 5

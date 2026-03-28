@@ -94,6 +94,11 @@ datalake-provisioner/
 - Service logs are emitted as structured JSON to stdout by default.
 - The intended production model is for the platform log pipeline to ship those logs to OpenSearch.
 
+## Metrics
+- `/metrics`: Prometheus metrics endpoint
+- Exposes HTTP, readiness, worker, operation, and Ceph adapter metrics.
+- Kubernetes/Helm service manifests include Prometheus scrape annotations for `/metrics` on port `8081`.
+
 ## Provision flow (implemented)
 1. `POST /v1/lakes`
 2. create lake row (`provisioning`) + operation row (`pending`)

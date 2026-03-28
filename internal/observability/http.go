@@ -23,13 +23,21 @@ func RequestLoggingMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		statusCode := ww.Status()
+		if statusCode == 0 {
+			statusCode = http.StatusOK
+		}
+
+		requestDuration := time.Since(startedAt)
+		ObserveHTTPRequest(r.Method, routePattern, statusCode, requestDuration)
+
 		attrs := []any{
 			"component", "http",
 			"http.method", r.Method,
 			"http.route", routePattern,
-			"http.status_code", ww.Status(),
+			"http.status_code", statusCode,
 			"http.response.bytes", ww.BytesWritten(),
-			"duration_ms", durationMs(time.Since(startedAt)),
+			"duration_ms", durationMs(requestDuration),
 		}
 		if requestID := middleware.GetReqID(r.Context()); requestID != "" {
 			attrs = append(attrs, "request.id", requestID)
@@ -51,11 +59,11 @@ func RequestLoggingMiddleware(next http.Handler) http.Handler {
 		}
 
 		message := "http request completed"
-		if ww.Status() >= http.StatusInternalServerError {
+		if statusCode >= http.StatusInternalServerError {
 			slog.ErrorContext(r.Context(), message, attrs...)
 			return
 		}
-		if ww.Status() >= http.StatusBadRequest {
+		if statusCode >= http.StatusBadRequest {
 			slog.WarnContext(r.Context(), message, attrs...)
 			return
 		}

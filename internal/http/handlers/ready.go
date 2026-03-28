@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/movincloud/datalake-provisioner/internal/ceph"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 type ReadyHandler struct {
@@ -29,9 +30,12 @@ func (h *ReadyHandler) GetReady(w http.ResponseWriter, r *http.Request) {
 	checks := map[string]readinessCheckResult{}
 	overallReady := true
 
+	dbStartedAt := time.Now()
 	if h.DB == nil {
 		overallReady = false
+		dbErr := context.Canceled
 		checks["db"] = readinessCheckResult{Status: "error", Error: "database pool not configured"}
+		observability.ObserveReadinessCheck("db", time.Since(dbStartedAt), dbErr)
 	} else {
 		dbCtx, dbCancel := context.WithTimeout(r.Context(), timeout)
 		dbErr := h.DB.Ping(dbCtx)
@@ -42,11 +46,15 @@ func (h *ReadyHandler) GetReady(w http.ResponseWriter, r *http.Request) {
 		} else {
 			checks["db"] = readinessCheckResult{Status: "ok"}
 		}
+		observability.ObserveReadinessCheck("db", time.Since(dbStartedAt), dbErr)
 	}
 
+	rgwStartedAt := time.Now()
 	if h.Ceph == nil {
 		overallReady = false
+		rgwErr := context.Canceled
 		checks["rgw"] = readinessCheckResult{Status: "error", Error: "ceph adapter not configured"}
+		observability.ObserveReadinessCheck("rgw", time.Since(rgwStartedAt), rgwErr)
 	} else {
 		rgwCtx, rgwCancel := context.WithTimeout(r.Context(), timeout)
 		rgwErr := h.Ceph.CheckReady(rgwCtx)
@@ -57,6 +65,7 @@ func (h *ReadyHandler) GetReady(w http.ResponseWriter, r *http.Request) {
 		} else {
 			checks["rgw"] = readinessCheckResult{Status: "ok"}
 		}
+		observability.ObserveReadinessCheck("rgw", time.Since(rgwStartedAt), rgwErr)
 	}
 
 	status := http.StatusOK

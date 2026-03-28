@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	rgwadmin "github.com/ceph/go-ceph/rgw/admin"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 type RGWAdminAPIAdapter struct {
@@ -66,14 +67,24 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	}, nil
 }
 
-func (a *RGWAdminAPIAdapter) CheckReady(ctx context.Context) error {
-	if _, err := a.adminClient.GetUsers(ctx); err != nil {
+func (a *RGWAdminAPIAdapter) CheckReady(ctx context.Context) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("check_ready", time.Since(startedAt), err)
+	}()
+
+	if _, err = a.adminClient.GetUsers(ctx); err != nil {
 		return fmt.Errorf("rgw admin readiness check failed: %w", err)
 	}
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error) {
+func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (lakeAccess LakeAccess, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("ensure_lake", time.Since(startedAt), err)
+	}()
+
 	user, err := a.ensureLakeUserWithKey(ctx, lakeID)
 	if err != nil {
 		return LakeAccess{}, err
@@ -81,7 +92,12 @@ func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (Lak
 	return LakeAccess{RGWUser: user.ID}, nil
 }
 
-func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) error {
+func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("set_lake_quota", time.Since(startedAt), err)
+	}()
+
 	if sizeGiB <= 0 {
 		return fmt.Errorf("invalid sizeGiB %d", sizeGiB)
 	}
@@ -89,7 +105,7 @@ func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, si
 	maxSizeKB := int(sizeGiB * 1024 * 1024)
 	enabled := true
 	uid := buildUID(lakeID)
-	err := a.adminClient.SetUserQuota(ctx, rgwadmin.QuotaSpec{
+	err = a.adminClient.SetUserQuota(ctx, rgwadmin.QuotaSpec{
 		UID:       uid,
 		Enabled:   &enabled,
 		MaxSizeKb: &maxSizeKB,
@@ -100,7 +116,12 @@ func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, si
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) error {
+func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("delete_lake", time.Since(startedAt), err)
+	}()
+
 	uid := buildUID(lakeID)
 
 	buckets, err := a.adminClient.ListUsersBuckets(ctx, uid)
@@ -124,7 +145,12 @@ func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) erro
 	return nil
 }
 
-func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketName string) error {
+func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketName string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("create_bucket", time.Since(startedAt), err)
+	}()
+
 	user, err := a.getLakeUserWithKey(ctx, lakeID)
 	if err != nil {
 		return err
@@ -137,7 +163,12 @@ func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketNam
 	return a.ensureBucket(ctx, s3Client, bucketName)
 }
 
-func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bucketName string) error {
+func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bucketName string) (err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("delete_bucket_if_empty", time.Since(startedAt), err)
+	}()
+
 	user, err := a.getLakeUserWithKey(ctx, lakeID)
 	if err != nil {
 		return err
@@ -150,7 +181,12 @@ func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bu
 	return a.deleteBucketIfEmpty(ctx, s3Client, bucketName)
 }
 
-func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (LakeUsage, error) {
+func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (lakeUsage LakeUsage, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("get_lake_usage", time.Since(startedAt), err)
+	}()
+
 	user, err := a.getLakeUser(ctx, lakeID, true)
 	if err != nil {
 		return LakeUsage{}, err
@@ -162,7 +198,12 @@ func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (L
 	}, nil
 }
 
-func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName string) (BucketUsage, error) {
+func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName string) (bucketUsage BucketUsage, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("get_bucket_usage", time.Since(startedAt), err)
+	}()
+
 	bucket, err := a.adminClient.GetBucketInfo(ctx, rgwadmin.Bucket{Bucket: bucketName})
 	if err != nil {
 		return BucketUsage{}, fmt.Errorf("get bucket info %s: %w", bucketName, err)
@@ -174,14 +215,19 @@ func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName stri
 	}, nil
 }
 
-func (a *RGWAdminAPIAdapter) ListLakeBucketUsage(ctx context.Context, lakeID string) (map[string]BucketUsage, error) {
+func (a *RGWAdminAPIAdapter) ListLakeBucketUsage(ctx context.Context, lakeID string) (usageByBucket map[string]BucketUsage, err error) {
+	startedAt := time.Now()
+	defer func() {
+		observability.ObserveCephRequest("list_lake_bucket_usage", time.Since(startedAt), err)
+	}()
+
 	uid := buildUID(lakeID)
 	buckets, err := a.adminClient.ListUsersBucketsWithStat(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("list buckets with stats for user %s: %w", uid, err)
 	}
 
-	usageByBucket := make(map[string]BucketUsage, len(buckets))
+	usageByBucket = make(map[string]BucketUsage, len(buckets))
 	for _, bucket := range buckets {
 		usageByBucket[bucket.Bucket] = BucketUsage{
 			UsedBytes:   uint64PtrToInt64(bucket.Usage.RgwMain.Size),

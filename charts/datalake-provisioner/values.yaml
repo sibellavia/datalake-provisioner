@@ -12,6 +12,10 @@ fullnameOverride: ""
 service:
   type: ClusterIP
   port: 8081
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: "/metrics"
 
 ingress:
   enabled: false

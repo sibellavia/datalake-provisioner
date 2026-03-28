@@ -26,6 +26,7 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Get("/health", handlers.Health)
 	r.Get("/ready", d.ReadyHandler.GetReady)
+	r.Handle("/metrics", observability.MetricsHandler())
 
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Use(handlers.InternalTokenMiddleware(d.InternalToken))

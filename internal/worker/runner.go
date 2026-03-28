@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/movincloud/datalake-provisioner/internal/domain"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 const defaultAdvisoryLockKey int64 = 44831101
@@ -30,6 +31,8 @@ type Runner struct {
 }
 
 func (r *Runner) Run(ctx context.Context) {
+	observability.SetWorkerLeader(false)
+
 	if r == nil || r.DB == nil || r.Service == nil {
 		slog.WarnContext(ctx, "worker disabled: missing db or service", "component", "worker")
 		return
@@ -66,6 +69,7 @@ func (r *Runner) Run(ctx context.Context) {
 				continue
 			}
 			leaderConn = conn
+			observability.SetWorkerLeader(true)
 			slog.InfoContext(ctx, "worker leadership acquired", "component", "worker")
 		}
 
@@ -83,6 +87,7 @@ func (r *Runner) Run(ctx context.Context) {
 			r.sleep(ctx, r.PollInterval)
 			continue
 		} else if count > 0 {
+			observability.AddWorkerStaleResets(count)
 			slog.InfoContext(ctx, "worker reset stale running operations", "component", "worker", "count", count)
 		}
 
@@ -97,6 +102,7 @@ func (r *Runner) Run(ctx context.Context) {
 			continue
 		}
 
+		observability.ObserveWorkerClaim(op.OperationType)
 		slog.InfoContext(ctx, "worker claimed operation",
 			"component", "worker",
 			"operation.id", op.OperationID,
@@ -106,8 +112,10 @@ func (r *Runner) Run(ctx context.Context) {
 			"bucket.id", op.BucketID,
 			"attempt", op.AttemptCount,
 		)
+		executionStartedAt := time.Now()
 		if err := r.Service.ExecuteOperation(ctx, op); err != nil {
 			if op.AttemptCount >= r.MaxAttempts {
+				observability.ObserveWorkerExecution(op.OperationType, "failed", time.Since(executionStartedAt))
 				slog.ErrorContext(ctx, "worker failing operation permanently",
 					"component", "worker",
 					"operation.id", op.OperationID,
@@ -125,6 +133,8 @@ func (r *Runner) Run(ctx context.Context) {
 				continue
 			}
 
+			observability.ObserveWorkerExecution(op.OperationType, "requeued", time.Since(executionStartedAt))
+			observability.ObserveWorkerRequeue(op.OperationType)
 			nextAttemptAt := time.Now().UTC().Add(retryDelay(op.AttemptCount))
 			slog.WarnContext(ctx, "worker requeueing operation",
 				"component", "worker",
@@ -148,7 +158,10 @@ func (r *Runner) Run(ctx context.Context) {
 					)
 				}
 			}
+			continue
 		}
+
+		observability.ObserveWorkerExecution(op.OperationType, "success", time.Since(executionStartedAt))
 	}
 }
 
@@ -180,10 +193,12 @@ func (r *Runner) ensureLeadership(ctx context.Context, conn *pgxpool.Conn) error
 
 func (r *Runner) releaseLeadership(ctx context.Context, conn *pgxpool.Conn) {
 	if conn == nil {
+		observability.SetWorkerLeader(false)
 		return
 	}
 	_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, r.LockKey)
 	conn.Release()
+	observability.SetWorkerLeader(false)
 }
 
 func (r *Runner) sleep(ctx context.Context, d time.Duration) {

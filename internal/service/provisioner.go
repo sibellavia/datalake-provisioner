@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/movincloud/datalake-provisioner/internal/ceph"
 	"github.com/movincloud/datalake-provisioner/internal/domain"
+	"github.com/movincloud/datalake-provisioner/internal/observability"
 )
 
 type Repository interface {
@@ -86,7 +87,11 @@ type DeleteBucketRequest struct {
 	IdempotencyKey string
 }
 
-func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) (domain.Operation, error) {
+func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) (storedOp domain.Operation, err error) {
+	defer func() {
+		observability.ObserveOperationStartRequest("provision", classifyOperationStartRequestResult(err))
+	}()
+
 	now := time.Now().UTC()
 	lakeID := uuid.NewString()
 
@@ -128,15 +133,20 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		UpdatedAt:      now,
 	}
 
-	storedOp, err := s.Repo.StartProvisionOperation(ctx, lake, op, req.IdempotencyKey, requestHash)
+	storedOp, err = s.Repo.StartProvisionOperation(ctx, lake, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, mapStartOperationError("start provision operation", err)
+		err = mapStartOperationError("start provision operation", err)
+		return domain.Operation{}, err
 	}
 
 	return storedOp, nil
 }
 
-func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domain.Operation, error) {
+func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (storedOp domain.Operation, err error) {
+	defer func() {
+		observability.ObserveOperationStartRequest("resize", classifyOperationStartRequestResult(err))
+	}()
+
 	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
 	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
@@ -173,15 +183,20 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (domai
 		UpdatedAt:      now,
 	}
 
-	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, mapStartOperationError("start resize operation", err)
+		err = mapStartOperationError("start resize operation", err)
+		return domain.Operation{}, err
 	}
 
 	return storedOp, nil
 }
 
-func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionRequest) (domain.Operation, error) {
+func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionRequest) (storedOp domain.Operation, err error) {
+	defer func() {
+		observability.ObserveOperationStartRequest("deprovision", classifyOperationStartRequestResult(err))
+	}()
+
 	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
 	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
@@ -225,15 +240,20 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 		UpdatedAt:      now,
 	}
 
-	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, mapStartOperationError("start deprovision operation", err)
+		err = mapStartOperationError("start deprovision operation", err)
+		return domain.Operation{}, err
 	}
 
 	return storedOp, nil
 }
 
-func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketRequest) (domain.Operation, error) {
+func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketRequest) (storedOp domain.Operation, err error) {
+	defer func() {
+		observability.ObserveOperationStartRequest("bucket_create", classifyOperationStartRequestResult(err))
+	}()
+
 	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
 	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
@@ -287,15 +307,20 @@ func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketReq
 		UpdatedAt:      now,
 	}
 
-	storedOp, err := s.Repo.StartBucketCreateOperation(ctx, bucket, op, req.IdempotencyKey, requestHash)
+	storedOp, err = s.Repo.StartBucketCreateOperation(ctx, bucket, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, mapStartOperationError("start bucket create operation", err)
+		err = mapStartOperationError("start bucket create operation", err)
+		return domain.Operation{}, err
 	}
 
 	return storedOp, nil
 }
 
-func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketRequest) (domain.Operation, error) {
+func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketRequest) (storedOp domain.Operation, err error) {
+	defer func() {
+		observability.ObserveOperationStartRequest("bucket_delete", classifyOperationStartRequestResult(err))
+	}()
+
 	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
 	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
@@ -343,9 +368,10 @@ func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketReq
 		UpdatedAt:      now,
 	}
 
-	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
-		return domain.Operation{}, mapStartOperationError("start bucket delete operation", err)
+		err = mapStartOperationError("start bucket delete operation", err)
+		return domain.Operation{}, err
 	}
 
 	return storedOp, nil
@@ -400,6 +426,9 @@ func (s *Provisioner) MarkOperationExecutionFailed(ctx context.Context, op domai
 
 	if repoErr := s.Repo.MarkOperationFailed(ctx, op.OperationID, op.TenantID, errorMessage); repoErr != nil {
 		joinErr = errors.Join(joinErr, fmt.Errorf("mark operation failed: %w", repoErr))
+	}
+	if joinErr == nil {
+		observability.ObserveOperationTerminal(op.OperationType, "failed", op.StartedAt)
 	}
 	return joinErr
 }
@@ -463,6 +492,7 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
 		return fmt.Errorf("mark operation success: %w", err)
 	}
+	observability.ObserveOperationTerminal(op.OperationType, "success", op.StartedAt)
 
 	slog.InfoContext(ctx, "provision completed",
 		"component", "service",
@@ -497,6 +527,7 @@ func (s *Provisioner) executeResize(ctx context.Context, op domain.Operation, pa
 	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
 		return fmt.Errorf("mark operation success: %w", err)
 	}
+	observability.ObserveOperationTerminal(op.OperationType, "success", op.StartedAt)
 
 	slog.InfoContext(ctx, "resize completed",
 		"component", "service",
@@ -531,6 +562,7 @@ func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operatio
 	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
 		return fmt.Errorf("mark operation success: %w", err)
 	}
+	observability.ObserveOperationTerminal(op.OperationType, "success", op.StartedAt)
 
 	slog.InfoContext(ctx, "deprovision completed",
 		"component", "service",
@@ -559,6 +591,7 @@ func (s *Provisioner) executeCreateBucket(ctx context.Context, op domain.Operati
 	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
 		return fmt.Errorf("mark operation success: %w", err)
 	}
+	observability.ObserveOperationTerminal(op.OperationType, "success", op.StartedAt)
 
 	slog.InfoContext(ctx, "bucket create completed",
 		"component", "service",
@@ -592,6 +625,7 @@ func (s *Provisioner) executeDeleteBucket(ctx context.Context, op domain.Operati
 	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
 		return fmt.Errorf("mark operation success: %w", err)
 	}
+	observability.ObserveOperationTerminal(op.OperationType, "success", op.StartedAt)
 
 	slog.InfoContext(ctx, "bucket delete completed",
 		"component", "service",
@@ -610,6 +644,21 @@ func mapStartOperationError(prefix string, err error) error {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
 	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+func classifyOperationStartRequestResult(err error) string {
+	switch {
+	case err == nil:
+		return "accepted"
+	case errors.Is(err, domain.ErrIdempotencyMismatch), errors.Is(err, domain.ErrConflict):
+		return "conflict"
+	case errors.Is(err, domain.ErrInvalidState):
+		return "invalid_state"
+	case errors.Is(err, domain.ErrNotFound):
+		return "not_found"
+	default:
+		return "error"
+	}
 }
 
 func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {

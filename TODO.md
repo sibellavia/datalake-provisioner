@@ -318,7 +318,7 @@ These items should follow immediately after the core multi-bucket model exists.
 - [x] Add `/ready` endpoint that checks DB + RGW reachability
 - [x] Keep `/health` as lightweight liveness endpoint
 - [x] Switch to structured logging (`operationId`, `lakeId`, `bucketId`, `tenantId`, `siteId`, `attempt`)
-- [ ] Add Prometheus metrics for operations, duration, retries, failures
+- [x] Add Prometheus metrics for operations, duration, retries, failures
 - [ ] Add request correlation across API and worker paths
 - [ ] Add OpenTelemetry tracing for HTTP, worker, and Ceph adapter paths
 - [ ] Persist and propagate async trace context across API -> operation payload -> worker execution
@@ -328,9 +328,9 @@ These items should follow immediately after the core multi-bucket model exists.
   - use `slog` JSON logging
   - add request/operation correlation fields
   - add `/ready` for DB + RGW dependency checks
-- [ ] **PR-B**: Prometheus metrics
+- [x] **PR-B**: Prometheus metrics
   - add `/metrics`
-  - instrument HTTP, worker, operation, and Ceph adapter metrics
+  - instrument HTTP, worker, operation, readiness, and Ceph adapter metrics
   - keep metric labels low-cardinality
 - [ ] **PR-C**: OpenTelemetry tracing
   - add OTLP exporter/config
@@ -348,6 +348,7 @@ These items should follow immediately after the core multi-bucket model exists.
   - logs are emitted as structured JSON to stdout
   - HTTP request logs now include request IDs and route/status/duration fields
   - service/worker logs now include structured operation/lake/bucket context
+  - `/metrics` exposes Prometheus metrics for HTTP, readiness, worker, operation, and Ceph adapter paths
 
 **Done when**
 - Operators can answer: what failed, where, why, and for which tenant/lake/bucket
@@ -483,7 +484,7 @@ These features make the service feel more like a complete managed object storage
 7. [x] **PR-7**: Bucket lifecycle APIs + worker operations
 8. [x] **PR-8**: Lake usage, bucket usage, and fleet-wide totals
 9. [x] **PR-A**: Observability foundation (structured JSON logs + `/ready`)
-10. [ ] **PR-B**: Prometheus metrics
+10. [x] **PR-B**: Prometheus metrics
 11. [ ] **PR-C**: OpenTelemetry tracing + async trace propagation
 12. [ ] **PR-9**: Retries / timeouts / error classification (deferred for now)
 13. [ ] **PR-11**: Security hardening for Kong deployment model
@@ -517,4 +518,5 @@ The next major milestone is complete when all of the following are true:
 - [x] **Global total usage across all lakes** is available
 - [x] Basic DB / RGW readiness is visible
 - [x] Basic structured operation logs exist
+- [x] Prometheus can scrape meaningful service metrics
 

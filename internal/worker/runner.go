@@ -97,7 +97,7 @@ func (r *Runner) Run(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("worker claimed op=%s type=%s tenant=%s lake=%s attempt=%d", op.OperationID, op.OperationType, op.TenantID, op.LakeID, op.AttemptCount)
+		log.Printf("worker claimed op=%s type=%s tenant=%s lake=%s bucket=%s attempt=%d", op.OperationID, op.OperationType, op.TenantID, op.LakeID, op.BucketID, op.AttemptCount)
 		if err := r.Service.ExecuteOperation(ctx, op); err != nil {
 			if op.AttemptCount >= r.MaxAttempts {
 				log.Printf("worker failing op=%s permanently after %d attempt(s): %v", op.OperationID, op.AttemptCount, err)

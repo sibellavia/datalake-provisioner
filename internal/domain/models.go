@@ -63,6 +63,7 @@ type Operation struct {
 	OperationID    string          `json:"operationId"`
 	OperationType  string          `json:"operationType"`
 	LakeID         string          `json:"lakeId,omitempty"`
+	BucketID       string          `json:"bucketId,omitempty"`
 	TenantID       string          `json:"tenantId"`
 	Status         OperationStatus `json:"status"`
 	ErrorMessage   string          `json:"errorMessage,omitempty"`

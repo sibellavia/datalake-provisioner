@@ -31,6 +31,10 @@ func NewRouter(d Deps) http.Handler {
 		v1.Post("/lakes/{lakeId}/resize", d.LakesHandler.Resize)
 		v1.Delete("/lakes/{lakeId}", d.LakesHandler.Deprovision)
 		v1.Get("/lakes/{lakeId}", d.LakesHandler.GetLake)
+		v1.Post("/lakes/{lakeId}/buckets", d.LakesHandler.CreateBucket)
+		v1.Get("/lakes/{lakeId}/buckets", d.LakesHandler.ListBuckets)
+		v1.Get("/lakes/{lakeId}/buckets/{bucketId}", d.LakesHandler.GetBucket)
+		v1.Delete("/lakes/{lakeId}/buckets/{bucketId}", d.LakesHandler.DeleteBucket)
 
 		v1.Get("/operations/{operationId}", d.OpsHandler.GetOperation)
 	})

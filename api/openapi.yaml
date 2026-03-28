@@ -119,6 +119,88 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/lakes/{lakeId}/buckets:
+    post:
+      summary: Create bucket in a lake
+      operationId: createBucket
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBucketRequest'
+      responses:
+        '202':
+          description: Bucket create operation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    get:
+      summary: List buckets in a lake
+      operationId: listBuckets
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+      responses:
+        '200':
+          description: Bucket list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Bucket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/lakes/{lakeId}/buckets/{bucketId}:
+    get:
+      summary: Get bucket details
+      operationId: getBucket
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+        - $ref: '#/components/parameters/BucketIdPath'
+      responses:
+        '200':
+          description: Bucket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bucket'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete bucket from a lake
+      operationId: deleteBucket
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+        - $ref: '#/components/parameters/BucketIdPath'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      responses:
+        '202':
+          description: Bucket delete operation accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Operation'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /v1/operations/{operationId}:
     get:
       summary: Get operation status
@@ -163,6 +245,13 @@ components:
     LakeIdPath:
       in: path
       name: lakeId
+      required: true
+      schema:
+        type: string
+
+    BucketIdPath:
+      in: path
+      name: bucketId
       required: true
       schema:
         type: string
@@ -224,6 +313,14 @@ components:
           minimum: 1
           example: 250
 
+    CreateBucketRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: raw
+
     Lake:
       type: object
       properties:
@@ -250,6 +347,31 @@ components:
           type: string
           format: date-time
 
+    Bucket:
+      type: object
+      properties:
+        bucketId:
+          type: string
+        lakeId:
+          type: string
+        tenantId:
+          type: string
+        name:
+          type: string
+        bucketName:
+          type: string
+        status:
+          type: string
+          enum: [creating, ready, deleting, failed, deleted]
+        lastError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
     Operation:
       type: object
       properties:
@@ -257,8 +379,10 @@ components:
           type: string
         operationType:
           type: string
-          enum: [provision, resize, deprovision]
+          enum: [provision, resize, deprovision, bucket_create, bucket_delete]
         lakeId:
+          type: string
+        bucketId:
           type: string
         tenantId:
           type: string

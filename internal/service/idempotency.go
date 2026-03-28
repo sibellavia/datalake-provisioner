@@ -26,6 +26,20 @@ type deprovisionIdempotencyInput struct {
 	LakeID   string `json:"lakeId"`
 }
 
+type createBucketIdempotencyInput struct {
+	Type     string `json:"type"`
+	TenantID string `json:"tenantId"`
+	LakeID   string `json:"lakeId"`
+	Name     string `json:"name"`
+}
+
+type deleteBucketIdempotencyInput struct {
+	Type     string `json:"type"`
+	TenantID string `json:"tenantId"`
+	LakeID   string `json:"lakeId"`
+	BucketID string `json:"bucketId"`
+}
+
 func hashProvisionRequest(req ProvisionRequest) (string, error) {
 	return hashRequest(provisionIdempotencyInput{
 		Type:     "provision",
@@ -49,6 +63,24 @@ func hashDeprovisionRequest(req DeprovisionRequest) (string, error) {
 		Type:     "deprovision",
 		TenantID: req.TenantID,
 		LakeID:   req.LakeID,
+	})
+}
+
+func hashCreateBucketRequest(req CreateBucketRequest) (string, error) {
+	return hashRequest(createBucketIdempotencyInput{
+		Type:     "bucket_create",
+		TenantID: req.TenantID,
+		LakeID:   req.LakeID,
+		Name:     req.Name,
+	})
+}
+
+func hashDeleteBucketRequest(req DeleteBucketRequest) (string, error) {
+	return hashRequest(deleteBucketIdempotencyInput{
+		Type:     "bucket_delete",
+		TenantID: req.TenantID,
+		LakeID:   req.LakeID,
+		BucketID: req.BucketID,
 	})
 }
 

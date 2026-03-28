@@ -22,9 +22,10 @@ type Repository interface {
 	MarkLakeDeleting(ctx context.Context, lakeID, tenantID string) error
 	MarkLakeDeleted(ctx context.Context, lakeID, tenantID string) error
 	MarkLakeFailed(ctx context.Context, lakeID, tenantID, errorMessage string) error
+	CountNonDeletedBuckets(ctx context.Context, lakeID, tenantID string) (int, error)
 
-	CreateOperation(ctx context.Context, op domain.Operation) error
 	StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
+	StartBucketCreateOperation(ctx context.Context, bucket domain.Bucket, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartOperation(ctx context.Context, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error)
 	ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error)
@@ -32,6 +33,14 @@ type Repository interface {
 	ResetStaleRunningOperations(ctx context.Context, staleBefore time.Time) (int64, error)
 	MarkOperationSuccess(ctx context.Context, operationID, tenantID string) error
 	MarkOperationFailed(ctx context.Context, operationID, tenantID, errorMessage string) error
+
+	GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (domain.Bucket, error)
+	ListBuckets(ctx context.Context, lakeID, tenantID string) ([]domain.Bucket, error)
+	MarkBucketReady(ctx context.Context, bucketID, lakeID, tenantID string) error
+	MarkBucketDeleting(ctx context.Context, bucketID, lakeID, tenantID string) error
+	MarkBucketDeleted(ctx context.Context, bucketID, lakeID, tenantID string) error
+	MarkBucketCreateFailed(ctx context.Context, bucketID, lakeID, tenantID, errorMessage string) error
+	MarkBucketDeleteFailed(ctx context.Context, bucketID, lakeID, tenantID, errorMessage string) error
 }
 
 type Provisioner struct {
@@ -56,6 +65,20 @@ type ResizeRequest struct {
 type DeprovisionRequest struct {
 	TenantID       string
 	LakeID         string
+	IdempotencyKey string
+}
+
+type CreateBucketRequest struct {
+	TenantID       string
+	LakeID         string
+	Name           string
+	IdempotencyKey string
+}
+
+type DeleteBucketRequest struct {
+	TenantID       string
+	LakeID         string
+	BucketID       string
 	IdempotencyKey string
 }
 
@@ -163,6 +186,14 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 		return domain.Operation{}, fmt.Errorf("%w: deprovision allowed only when lake is ready or failed", domain.ErrInvalidState)
 	}
 
+	bucketCount, err := s.Repo.CountNonDeletedBuckets(ctx, req.LakeID, req.TenantID)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("count lake buckets: %w", err)
+	}
+	if bucketCount > 0 {
+		return domain.Operation{}, fmt.Errorf("%w: deprovision allowed only when lake has no buckets", domain.ErrInvalidState)
+	}
+
 	now := time.Now().UTC()
 	requestHash, err := hashDeprovisionRequest(req)
 	if err != nil {
@@ -198,6 +229,124 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 	return storedOp, nil
 }
 
+func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketRequest) (domain.Operation, error) {
+	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady {
+		return domain.Operation{}, fmt.Errorf("%w: bucket create allowed only when lake is ready", domain.ErrInvalidState)
+	}
+
+	now := time.Now().UTC()
+	bucketID := uuid.NewString()
+	bucketName := buildPhysicalBucketName(req.LakeID, bucketID, req.Name)
+
+	requestHash, err := hashCreateBucketRequest(req)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("hash bucket create request: %w", err)
+	}
+
+	bucket := domain.Bucket{
+		BucketID:   bucketID,
+		LakeID:     req.LakeID,
+		TenantID:   req.TenantID,
+		Name:       req.Name,
+		BucketName: bucketName,
+		Status:     domain.BucketStatusCreating,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+
+	payload, err := marshalOperationPayload(operationPayload{
+		Type:       "bucket_create",
+		TenantID:   req.TenantID,
+		LakeID:     req.LakeID,
+		BucketID:   bucketID,
+		Name:       req.Name,
+		BucketName: bucketName,
+	})
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("marshal bucket create payload: %w", err)
+	}
+
+	op := domain.Operation{
+		OperationID:    uuid.NewString(),
+		OperationType:  "bucket_create",
+		LakeID:         req.LakeID,
+		BucketID:       bucketID,
+		TenantID:       req.TenantID,
+		Status:         domain.OperationPending,
+		StartedAt:      now,
+		RequestPayload: payload,
+		NextAttemptAt:  now,
+		UpdatedAt:      now,
+	}
+
+	storedOp, err := s.Repo.StartBucketCreateOperation(ctx, bucket, op, req.IdempotencyKey, requestHash)
+	if err != nil {
+		return domain.Operation{}, mapStartOperationError("start bucket create operation", err)
+	}
+
+	return storedOp, nil
+}
+
+func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketRequest) (domain.Operation, error) {
+	lake, err := s.Repo.GetLake(ctx, req.LakeID, req.TenantID)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady {
+		return domain.Operation{}, fmt.Errorf("%w: bucket delete allowed only when lake is ready", domain.ErrInvalidState)
+	}
+
+	bucket, err := s.Repo.GetBucket(ctx, req.BucketID, req.LakeID, req.TenantID)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("get bucket: %w", err)
+	}
+	if bucket.Status != domain.BucketStatusReady {
+		return domain.Operation{}, fmt.Errorf("%w: bucket delete allowed only when bucket is ready", domain.ErrInvalidState)
+	}
+
+	now := time.Now().UTC()
+	requestHash, err := hashDeleteBucketRequest(req)
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("hash bucket delete request: %w", err)
+	}
+
+	payload, err := marshalOperationPayload(operationPayload{
+		Type:       "bucket_delete",
+		TenantID:   req.TenantID,
+		LakeID:     req.LakeID,
+		BucketID:   req.BucketID,
+		Name:       bucket.Name,
+		BucketName: bucket.BucketName,
+	})
+	if err != nil {
+		return domain.Operation{}, fmt.Errorf("marshal bucket delete payload: %w", err)
+	}
+
+	op := domain.Operation{
+		OperationID:    uuid.NewString(),
+		OperationType:  "bucket_delete",
+		LakeID:         req.LakeID,
+		BucketID:       req.BucketID,
+		TenantID:       req.TenantID,
+		Status:         domain.OperationPending,
+		StartedAt:      now,
+		RequestPayload: payload,
+		NextAttemptAt:  now,
+		UpdatedAt:      now,
+	}
+
+	storedOp, err := s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
+	if err != nil {
+		return domain.Operation{}, mapStartOperationError("start bucket delete operation", err)
+	}
+
+	return storedOp, nil
+}
+
 func (s *Provisioner) ClaimNextRunnableOperation(ctx context.Context) (domain.Operation, bool, error) {
 	return s.Repo.ClaimNextRunnableOperation(ctx)
 }
@@ -213,14 +362,30 @@ func (s *Provisioner) RequeueOperation(ctx context.Context, op domain.Operation,
 
 func (s *Provisioner) MarkOperationExecutionFailed(ctx context.Context, op domain.Operation, err error) error {
 	errorMessage := err.Error()
-	log.Printf("operation failed op=%s lake=%s tenant=%s: %s", op.OperationID, op.LakeID, op.TenantID, errorMessage)
+	log.Printf("operation failed op=%s type=%s lake=%s bucket=%s tenant=%s: %s", op.OperationID, op.OperationType, op.LakeID, op.BucketID, op.TenantID, errorMessage)
 
 	var joinErr error
-	if op.LakeID != "" {
-		if repoErr := s.Repo.MarkLakeFailed(ctx, op.LakeID, op.TenantID, errorMessage); repoErr != nil {
-			joinErr = errors.Join(joinErr, fmt.Errorf("mark lake failed: %w", repoErr))
+	switch op.OperationType {
+	case "bucket_create":
+		if op.BucketID != "" {
+			if repoErr := s.Repo.MarkBucketCreateFailed(ctx, op.BucketID, op.LakeID, op.TenantID, errorMessage); repoErr != nil {
+				joinErr = errors.Join(joinErr, fmt.Errorf("mark bucket create failed: %w", repoErr))
+			}
+		}
+	case "bucket_delete":
+		if op.BucketID != "" {
+			if repoErr := s.Repo.MarkBucketDeleteFailed(ctx, op.BucketID, op.LakeID, op.TenantID, errorMessage); repoErr != nil {
+				joinErr = errors.Join(joinErr, fmt.Errorf("mark bucket delete failed: %w", repoErr))
+			}
+		}
+	default:
+		if op.LakeID != "" {
+			if repoErr := s.Repo.MarkLakeFailed(ctx, op.LakeID, op.TenantID, errorMessage); repoErr != nil {
+				joinErr = errors.Join(joinErr, fmt.Errorf("mark lake failed: %w", repoErr))
+			}
 		}
 	}
+
 	if repoErr := s.Repo.MarkOperationFailed(ctx, op.OperationID, op.TenantID, errorMessage); repoErr != nil {
 		joinErr = errors.Join(joinErr, fmt.Errorf("mark operation failed: %w", repoErr))
 	}
@@ -243,6 +408,9 @@ func (s *Provisioner) ExecuteOperation(ctx context.Context, op domain.Operation)
 	if payload.LakeID == "" {
 		payload.LakeID = op.LakeID
 	}
+	if payload.BucketID == "" {
+		payload.BucketID = op.BucketID
+	}
 
 	switch op.OperationType {
 	case "provision":
@@ -251,6 +419,10 @@ func (s *Provisioner) ExecuteOperation(ctx context.Context, op domain.Operation)
 		return s.executeResize(ctx, op, payload)
 	case "deprovision":
 		return s.executeDeprovision(ctx, op, payload)
+	case "bucket_create":
+		return s.executeCreateBucket(ctx, op, payload)
+	case "bucket_delete":
+		return s.executeDeleteBucket(ctx, op, payload)
 	default:
 		return fmt.Errorf("unsupported operation type %q", op.OperationType)
 	}
@@ -338,8 +510,55 @@ func (s *Provisioner) executeDeprovision(ctx context.Context, op domain.Operatio
 	return nil
 }
 
+func (s *Provisioner) executeCreateBucket(ctx context.Context, op domain.Operation, payload operationPayload) error {
+	if s.Ceph == nil {
+		return fmt.Errorf("ceph adapter not configured")
+	}
+	if payload.LakeID == "" || payload.TenantID == "" || payload.BucketID == "" || payload.BucketName == "" {
+		return fmt.Errorf("invalid bucket create payload")
+	}
+
+	if err := s.Ceph.CreateBucket(ctx, payload.LakeID, payload.BucketName); err != nil {
+		return fmt.Errorf("ceph create bucket failed: %w", err)
+	}
+	if err := s.Repo.MarkBucketReady(ctx, payload.BucketID, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark bucket ready failed: %w", err)
+	}
+	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
+		return fmt.Errorf("mark operation success: %w", err)
+	}
+
+	log.Printf("bucket create completed op=%s lake=%s bucket=%s bucketName=%s tenant=%s", op.OperationID, payload.LakeID, payload.BucketID, payload.BucketName, payload.TenantID)
+	return nil
+}
+
+func (s *Provisioner) executeDeleteBucket(ctx context.Context, op domain.Operation, payload operationPayload) error {
+	if s.Ceph == nil {
+		return fmt.Errorf("ceph adapter not configured")
+	}
+	if payload.LakeID == "" || payload.TenantID == "" || payload.BucketID == "" || payload.BucketName == "" {
+		return fmt.Errorf("invalid bucket delete payload")
+	}
+
+	if err := s.Repo.MarkBucketDeleting(ctx, payload.BucketID, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark bucket deleting failed: %w", err)
+	}
+	if err := s.Ceph.DeleteBucketIfEmpty(ctx, payload.LakeID, payload.BucketName); err != nil {
+		return fmt.Errorf("ceph delete bucket failed: %w", err)
+	}
+	if err := s.Repo.MarkBucketDeleted(ctx, payload.BucketID, payload.LakeID, payload.TenantID); err != nil {
+		return fmt.Errorf("mark bucket deleted failed: %w", err)
+	}
+	if err := s.Repo.MarkOperationSuccess(ctx, op.OperationID, op.TenantID); err != nil {
+		return fmt.Errorf("mark operation success: %w", err)
+	}
+
+	log.Printf("bucket delete completed op=%s lake=%s bucket=%s bucketName=%s tenant=%s", op.OperationID, payload.LakeID, payload.BucketID, payload.BucketName, payload.TenantID)
+	return nil
+}
+
 func mapStartOperationError(prefix string, err error) error {
-	if errors.Is(err, domain.ErrIdempotencyMismatch) || errors.Is(err, domain.ErrConflict) {
+	if errors.Is(err, domain.ErrIdempotencyMismatch) || errors.Is(err, domain.ErrConflict) || errors.Is(err, domain.ErrInvalidState) || errors.Is(err, domain.ErrNotFound) {
 		return fmt.Errorf("%s: %w", prefix, err)
 	}
 	return fmt.Errorf("%s: %w", prefix, err)
@@ -359,4 +578,23 @@ func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (dom
 		return domain.Lake{}, fmt.Errorf("get lake: %w", err)
 	}
 	return lake, nil
+}
+
+func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (domain.Bucket, error) {
+	bucket, err := s.Repo.GetBucket(ctx, bucketID, lakeID, tenantID)
+	if err != nil {
+		return domain.Bucket{}, fmt.Errorf("get bucket: %w", err)
+	}
+	return bucket, nil
+}
+
+func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) ([]domain.Bucket, error) {
+	if _, err := s.Repo.GetLake(ctx, lakeID, tenantID); err != nil {
+		return nil, fmt.Errorf("get lake: %w", err)
+	}
+	buckets, err := s.Repo.ListBuckets(ctx, lakeID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list buckets: %w", err)
+	}
+	return buckets, nil
 }

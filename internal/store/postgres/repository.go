@@ -44,6 +44,9 @@ func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (doma
 		&lake.CreatedAt,
 		&lake.UpdatedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Lake{}, domain.ErrNotFound
+	}
 	return lake, err
 }
 
@@ -101,8 +104,14 @@ func (r *Repository) MarkLakeFailed(ctx context.Context, lakeID, tenantID, error
 	return err
 }
 
-func (r *Repository) CreateOperation(ctx context.Context, op domain.Operation) error {
-	return r.insertOperation(ctx, r.DB, op)
+func (r *Repository) CountNonDeletedBuckets(ctx context.Context, lakeID, tenantID string) (int, error) {
+	var count int
+	err := r.DB.QueryRow(ctx, `
+		SELECT COUNT(*)::int
+		FROM buckets
+		WHERE lake_id = $1 AND tenant_id = $2 AND status <> 'deleted'
+	`, lakeID, tenantID).Scan(&count)
+	return count, err
 }
 
 func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {
@@ -115,6 +124,47 @@ func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.La
 
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
 		if err := r.insertLake(ctx, tx, lake); err != nil {
+			return err
+		}
+		if err := r.insertOperation(ctx, tx, op); err != nil {
+			return err
+		}
+		if idempotencyKey != "" {
+			if err := r.insertIdempotencyKey(ctx, tx, op.TenantID, idempotencyKey, op.OperationID, op.OperationType, requestHash); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			if idempotencyKey != "" {
+				existingOp, found, getErr := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+				if getErr != nil {
+					return domain.Operation{}, getErr
+				}
+				if found {
+					return existingOp, nil
+				}
+			}
+			return domain.Operation{}, domain.ErrConflict
+		}
+		return domain.Operation{}, err
+	}
+
+	return op, nil
+}
+
+func (r *Repository) StartBucketCreateOperation(ctx context.Context, bucket domain.Bucket, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {
+	if idempotencyKey != "" {
+		existingOp, found, err := r.getIdempotentOperation(ctx, op.TenantID, idempotencyKey, requestHash)
+		if err != nil || found {
+			return existingOp, err
+		}
+	}
+
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		if err := r.insertBucket(ctx, tx, bucket); err != nil {
 			return err
 		}
 		if err := r.insertOperation(ctx, tx, op); err != nil {
@@ -187,7 +237,7 @@ func (r *Repository) StartOperation(ctx context.Context, op domain.Operation, id
 func (r *Repository) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {
 	var op domain.Operation
 	err := r.DB.QueryRow(ctx, `
-		SELECT operation_id, operation_type, COALESCE(lake_id::text,''), tenant_id, status, COALESCE(error_message,''), started_at, ended_at,
+		SELECT operation_id, operation_type, COALESCE(lake_id::text,''), COALESCE(bucket_id::text,''), tenant_id, status, COALESCE(error_message,''), started_at, ended_at,
 		       COALESCE(request_payload, '{}'::jsonb), COALESCE(attempt_count, 0), COALESCE(next_attempt_at, NOW()), COALESCE(updated_at, started_at), COALESCE(error_code, '')
 		FROM operations
 		WHERE operation_id = $1 AND tenant_id = $2
@@ -195,6 +245,7 @@ func (r *Repository) GetOperation(ctx context.Context, operationID, tenantID str
 		&op.OperationID,
 		&op.OperationType,
 		&op.LakeID,
+		&op.BucketID,
 		&op.TenantID,
 		&op.Status,
 		&op.ErrorMessage,
@@ -206,6 +257,9 @@ func (r *Repository) GetOperation(ctx context.Context, operationID, tenantID str
 		&op.UpdatedAt,
 		&op.ErrorCode,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Operation{}, domain.ErrNotFound
+	}
 	return op, err
 }
 
@@ -228,13 +282,14 @@ func (r *Repository) ClaimNextRunnableOperation(ctx context.Context) (domain.Ope
 		    attempt_count = o.attempt_count + 1
 		FROM next_op
 		WHERE o.operation_id = next_op.operation_id
-		RETURNING o.operation_id, o.operation_type, COALESCE(o.lake_id::text,''), o.tenant_id, o.status,
+		RETURNING o.operation_id, o.operation_type, COALESCE(o.lake_id::text,''), COALESCE(o.bucket_id::text,''), o.tenant_id, o.status,
 		          COALESCE(o.error_message,''), o.started_at, o.ended_at,
 		          COALESCE(o.request_payload, '{}'::jsonb), o.attempt_count, o.next_attempt_at, o.updated_at, COALESCE(o.error_code, '')
 	`).Scan(
 		&op.OperationID,
 		&op.OperationType,
 		&op.LakeID,
+		&op.BucketID,
 		&op.TenantID,
 		&op.Status,
 		&op.ErrorMessage,
@@ -294,6 +349,110 @@ func (r *Repository) MarkOperationFailed(ctx context.Context, operationID, tenan
 	return err
 }
 
+func (r *Repository) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (domain.Bucket, error) {
+	var bucket domain.Bucket
+	err := r.DB.QueryRow(ctx, `
+		SELECT bucket_id, lake_id, tenant_id, name, bucket_name, status, COALESCE(last_error,''), created_at, updated_at
+		FROM buckets
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3 AND status <> 'deleted'
+	`, bucketID, lakeID, tenantID).Scan(
+		&bucket.BucketID,
+		&bucket.LakeID,
+		&bucket.TenantID,
+		&bucket.Name,
+		&bucket.BucketName,
+		&bucket.Status,
+		&bucket.LastError,
+		&bucket.CreatedAt,
+		&bucket.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.Bucket{}, domain.ErrNotFound
+	}
+	return bucket, err
+}
+
+func (r *Repository) ListBuckets(ctx context.Context, lakeID, tenantID string) ([]domain.Bucket, error) {
+	rows, err := r.DB.Query(ctx, `
+		SELECT bucket_id, lake_id, tenant_id, name, bucket_name, status, COALESCE(last_error,''), created_at, updated_at
+		FROM buckets
+		WHERE lake_id = $1 AND tenant_id = $2 AND status <> 'deleted'
+		ORDER BY created_at ASC
+	`, lakeID, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	buckets := make([]domain.Bucket, 0)
+	for rows.Next() {
+		var bucket domain.Bucket
+		if err := rows.Scan(
+			&bucket.BucketID,
+			&bucket.LakeID,
+			&bucket.TenantID,
+			&bucket.Name,
+			&bucket.BucketName,
+			&bucket.Status,
+			&bucket.LastError,
+			&bucket.CreatedAt,
+			&bucket.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		buckets = append(buckets, bucket)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return buckets, nil
+}
+
+func (r *Repository) MarkBucketReady(ctx context.Context, bucketID, lakeID, tenantID string) error {
+	_, err := r.DB.Exec(ctx, `
+		UPDATE buckets
+		SET status = 'ready', last_error = NULL, updated_at = NOW()
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3
+	`, bucketID, lakeID, tenantID)
+	return err
+}
+
+func (r *Repository) MarkBucketDeleting(ctx context.Context, bucketID, lakeID, tenantID string) error {
+	_, err := r.DB.Exec(ctx, `
+		UPDATE buckets
+		SET status = 'deleting', updated_at = NOW()
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3
+	`, bucketID, lakeID, tenantID)
+	return err
+}
+
+func (r *Repository) MarkBucketDeleted(ctx context.Context, bucketID, lakeID, tenantID string) error {
+	_, err := r.DB.Exec(ctx, `
+		UPDATE buckets
+		SET status = 'deleted', last_error = NULL, updated_at = NOW()
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3
+	`, bucketID, lakeID, tenantID)
+	return err
+}
+
+func (r *Repository) MarkBucketCreateFailed(ctx context.Context, bucketID, lakeID, tenantID, errorMessage string) error {
+	_, err := r.DB.Exec(ctx, `
+		UPDATE buckets
+		SET status = 'failed', last_error = $4, updated_at = NOW()
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3
+	`, bucketID, lakeID, tenantID, errorMessage)
+	return err
+}
+
+func (r *Repository) MarkBucketDeleteFailed(ctx context.Context, bucketID, lakeID, tenantID, errorMessage string) error {
+	_, err := r.DB.Exec(ctx, `
+		UPDATE buckets
+		SET status = 'ready', last_error = $4, updated_at = NOW()
+		WHERE bucket_id = $1 AND lake_id = $2 AND tenant_id = $3
+	`, bucketID, lakeID, tenantID, errorMessage)
+	return err
+}
+
 func (r *Repository) insertLake(ctx context.Context, exec execer, lake domain.Lake) error {
 	_, err := exec.Exec(ctx, `
 		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, rgw_user, last_error, created_at, updated_at)
@@ -302,11 +461,19 @@ func (r *Repository) insertLake(ctx context.Context, exec execer, lake domain.La
 	return err
 }
 
+func (r *Repository) insertBucket(ctx context.Context, exec execer, bucket domain.Bucket) error {
+	_, err := exec.Exec(ctx, `
+		INSERT INTO buckets (bucket_id, lake_id, tenant_id, name, bucket_name, status, last_error, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, bucket.BucketID, bucket.LakeID, bucket.TenantID, bucket.Name, bucket.BucketName, bucket.Status, nullable(bucket.LastError), bucket.CreatedAt, bucket.UpdatedAt)
+	return err
+}
+
 func (r *Repository) insertOperation(ctx context.Context, exec execer, op domain.Operation) error {
 	_, err := exec.Exec(ctx, `
-		INSERT INTO operations (operation_id, operation_type, lake_id, tenant_id, status, error_message, started_at, ended_at, request_payload, attempt_count, next_attempt_at, updated_at, error_code)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-	`, op.OperationID, op.OperationType, nullable(op.LakeID), op.TenantID, op.Status, nullable(op.ErrorMessage), op.StartedAt, op.EndedAt, op.RequestPayload, op.AttemptCount, op.NextAttemptAt, op.UpdatedAt, nullable(op.ErrorCode))
+		INSERT INTO operations (operation_id, operation_type, lake_id, bucket_id, tenant_id, status, error_message, started_at, ended_at, request_payload, attempt_count, next_attempt_at, updated_at, error_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+	`, op.OperationID, op.OperationType, nullable(op.LakeID), nullable(op.BucketID), op.TenantID, op.Status, nullable(op.ErrorMessage), op.StartedAt, op.EndedAt, op.RequestPayload, op.AttemptCount, op.NextAttemptAt, op.UpdatedAt, nullable(op.ErrorCode))
 	return err
 }
 

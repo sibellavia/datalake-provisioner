@@ -164,13 +164,78 @@ datalake-provisioner/
 
 ## Local run
 1. Run PostgreSQL and create DB.
-2. Apply migrations.
+2. Apply migrations from `migrations/*.up.sql`.
 3. Export env vars (or use `.env.example`).
 4. Start API:
 
 ```bash
 go run ./cmd/server
 ```
+
+## Docker Compose (non-Kubernetes / target environment)
+For simple testing outside Kubernetes, use the included Compose setup:
+
+- `compose.yaml`
+- `compose.env.example`
+
+### 1) Prepare environment
+
+```bash
+cp compose.env.example .env.compose
+```
+
+Then edit at least:
+- `RGW_ENDPOINT`
+- `RGW_ACCESS_KEY_ID`
+- `RGW_SECRET_ACCESS_KEY`
+- optional Postgres / OTEL values if needed
+
+### 2) Start the stack
+
+```bash
+docker compose --env-file .env.compose up --build
+```
+
+This starts:
+- `postgres`
+- `migrate` (one-shot SQL migration container)
+- `provisioner`
+
+### 3) Validate the service
+
+```bash
+curl http://localhost:8081/health
+curl http://localhost:8081/ready
+curl http://localhost:8081/metrics
+```
+
+### 4) Smoke-test the API
+
+```bash
+curl -X POST http://localhost:8081/v1/lakes \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant: tenant-a' \
+  -d '{"userId":"user-1","sizeGiB":10}'
+```
+
+Poll operation:
+
+```bash
+curl -H 'X-Tenant: tenant-a' \
+  http://localhost:8081/v1/operations/<operationId>
+```
+
+Get lake:
+
+```bash
+curl -H 'X-Tenant: tenant-a' \
+  http://localhost:8081/v1/lakes/<lakeId>
+```
+
+### Notes for Compose usage
+- The service still expects an external Ceph RGW endpoint; Compose only supplies Postgres + migrations.
+- The migration container reapplies all `*.up.sql` files on startup; the current migrations are written to tolerate repeated application for lab/test usage.
+- Helm charts were removed and will be rebuilt later; Compose is the current recommended path for non-Kubernetes testing.
 
 ## Container image (Docker)
 Build locally:
@@ -192,39 +257,3 @@ docker login
 docker push <dockerhub-username>/datalake-provisioner:0.1.1
 ```
 
-## Helm install (lab)
-Install/upgrade with explicit values for RGW + token:
-
-```bash
-helm upgrade --install datalake-provisioner ./charts/datalake-provisioner \
-  --namespace datalake --create-namespace \
-  --set provisioner.rgwEndpoint=http://192.168.3.251:7480 \
-  --set provisioner.rgwAccessKeyId=<RGW_ACCESS_KEY_ID> \
-  --set provisioner.rgwSecretAccessKey=<RGW_SECRET_ACCESS_KEY>
-```
-
-Then port-forward:
-
-```bash
-kubectl -n datalake port-forward svc/datalake-provisioner-datalake-provisioner 8081:8081
-```
-
-## Quick test
-```bash
-curl -X POST http://localhost:8081/v1/lakes \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant: tenant-a' \
-  -d '{"userId":"user-1","sizeGiB":10}'
-```
-
-Poll operation:
-```bash
-curl -H 'X-Tenant: tenant-a' \
-  http://localhost:8081/v1/operations/<operationId>
-```
-
-Get lake:
-```bash
-curl -H 'X-Tenant: tenant-a' \
-  http://localhost:8081/v1/lakes/<lakeId>
-```

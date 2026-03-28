@@ -15,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	rgwadmin "github.com/ceph/go-ceph/rgw/admin"
 	"github.com/movincloud/datalake-provisioner/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type RGWAdminAPIAdapter struct {
@@ -67,9 +69,16 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	}, nil
 }
 
+func startCephSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return observability.Tracer("ceph").Start(ctx, name, trace.WithAttributes(attrs...))
+}
+
 func (a *RGWAdminAPIAdapter) CheckReady(ctx context.Context) (err error) {
+	ctx, span := startCephSpan(ctx, "ceph.check_ready")
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("check_ready", time.Since(startedAt), err)
 	}()
 
@@ -80,8 +89,11 @@ func (a *RGWAdminAPIAdapter) CheckReady(ctx context.Context) (err error) {
 }
 
 func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (lakeAccess LakeAccess, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.ensure_lake", attribute.String("lake.id", lakeID))
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("ensure_lake", time.Since(startedAt), err)
 	}()
 
@@ -93,8 +105,14 @@ func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (lak
 }
 
 func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) (err error) {
+	ctx, span := startCephSpan(ctx, "ceph.set_lake_quota",
+		attribute.String("lake.id", lakeID),
+		attribute.Int64("requested_size_gib", sizeGiB),
+	)
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("set_lake_quota", time.Since(startedAt), err)
 	}()
 
@@ -117,8 +135,11 @@ func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, si
 }
 
 func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) (err error) {
+	ctx, span := startCephSpan(ctx, "ceph.delete_lake", attribute.String("lake.id", lakeID))
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("delete_lake", time.Since(startedAt), err)
 	}()
 
@@ -146,8 +167,14 @@ func (a *RGWAdminAPIAdapter) DeleteLake(ctx context.Context, lakeID string) (err
 }
 
 func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketName string) (err error) {
+	ctx, span := startCephSpan(ctx, "ceph.create_bucket",
+		attribute.String("lake.id", lakeID),
+		attribute.String("bucket.name", bucketName),
+	)
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("create_bucket", time.Since(startedAt), err)
 	}()
 
@@ -164,8 +191,14 @@ func (a *RGWAdminAPIAdapter) CreateBucket(ctx context.Context, lakeID, bucketNam
 }
 
 func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bucketName string) (err error) {
+	ctx, span := startCephSpan(ctx, "ceph.delete_bucket_if_empty",
+		attribute.String("lake.id", lakeID),
+		attribute.String("bucket.name", bucketName),
+	)
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("delete_bucket_if_empty", time.Since(startedAt), err)
 	}()
 
@@ -182,8 +215,11 @@ func (a *RGWAdminAPIAdapter) DeleteBucketIfEmpty(ctx context.Context, lakeID, bu
 }
 
 func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (lakeUsage LakeUsage, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.get_lake_usage", attribute.String("lake.id", lakeID))
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("get_lake_usage", time.Since(startedAt), err)
 	}()
 
@@ -199,8 +235,11 @@ func (a *RGWAdminAPIAdapter) GetLakeUsage(ctx context.Context, lakeID string) (l
 }
 
 func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName string) (bucketUsage BucketUsage, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.get_bucket_usage", attribute.String("bucket.name", bucketName))
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("get_bucket_usage", time.Since(startedAt), err)
 	}()
 
@@ -216,8 +255,11 @@ func (a *RGWAdminAPIAdapter) GetBucketUsage(ctx context.Context, bucketName stri
 }
 
 func (a *RGWAdminAPIAdapter) ListLakeBucketUsage(ctx context.Context, lakeID string) (usageByBucket map[string]BucketUsage, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.list_lake_bucket_usage", attribute.String("lake.id", lakeID))
 	startedAt := time.Now()
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveCephRequest("list_lake_bucket_usage", time.Since(startedAt), err)
 	}()
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/movincloud/datalake-provisioner/internal/app"
 	"github.com/movincloud/datalake-provisioner/internal/config"
@@ -20,6 +21,27 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	shutdownTracing, err := observability.SetupTracing(ctx, observability.TracingConfig{
+		Enabled:      cfg.OTELEnabled,
+		OTLPEndpoint: cfg.OTELExporterOTLPEndpoint,
+		OTLPInsecure: cfg.OTELExporterOTLPInsecure,
+	})
+	if err != nil {
+		slog.Error("setup tracing error", "component", "main", "error.message", err.Error())
+		panic(err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			slog.Error("shutdown tracing error", "component", "main", "error.message", err.Error())
+		}
+	}()
+
+	if cfg.OTELEnabled {
+		slog.Info("tracing enabled", "component", "main", "otlp.endpoint", cfg.OTELExporterOTLPEndpoint)
+	}
 
 	application, err := app.New(ctx)
 	if err != nil {

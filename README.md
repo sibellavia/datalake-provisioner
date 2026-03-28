@@ -66,6 +66,9 @@ datalake-provisioner/
 - `READY_TIMEOUT_SECONDS` (default: `3`)
 - `LOG_FORMAT` (`json|text`, default: `json`)
 - `LOG_LEVEL` (`debug|info|warn|error`, default: `info`)
+- `OTEL_ENABLED` (`true|false`, default: `false`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (OTLP gRPC endpoint, e.g. `otel-collector.observability.svc.cluster.local:4317`)
+- `OTEL_EXPORTER_OTLP_INSECURE` (`true|false`, default: `true`)
 - `DATABASE_URL` (default local postgres URL)
 - `INTERNAL_TOKEN` (required in real deployments)
 - `WORKER_ENABLED` (default: `true`)
@@ -98,6 +101,11 @@ datalake-provisioner/
 - `/metrics`: Prometheus metrics endpoint
 - Exposes HTTP, readiness, worker, operation, and Ceph adapter metrics.
 - Kubernetes/Helm service manifests include Prometheus scrape annotations for `/metrics` on port `8081`.
+
+## Tracing
+- OTLP trace export is supported via OpenTelemetry.
+- Current scope instruments HTTP, worker execution, service methods, and Ceph adapter calls.
+- Async trace propagation across persisted operations is not implemented yet, so API-request traces and later worker traces are not stitched into a single end-to-end trace yet.
 
 ## Provision flow (implemented)
 1. `POST /v1/lakes`

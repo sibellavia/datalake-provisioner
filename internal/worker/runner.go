@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/movincloud/datalake-provisioner/internal/domain"
 	"github.com/movincloud/datalake-provisioner/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const defaultAdvisoryLockKey int64 = 44831101
@@ -28,6 +30,22 @@ type Runner struct {
 	StaleAfter   time.Duration
 	MaxAttempts  int
 	LockKey      int64
+}
+
+func operationSpanAttributes(op domain.Operation) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		attribute.String("operation.id", op.OperationID),
+		attribute.String("operation.type", op.OperationType),
+		attribute.String("tenant.id", op.TenantID),
+		attribute.Int("operation.attempt", op.AttemptCount),
+	}
+	if op.LakeID != "" {
+		attrs = append(attrs, attribute.String("lake.id", op.LakeID))
+	}
+	if op.BucketID != "" {
+		attrs = append(attrs, attribute.String("bucket.id", op.BucketID))
+	}
+	return attrs
 }
 
 func (r *Runner) Run(ctx context.Context) {
@@ -103,7 +121,10 @@ func (r *Runner) Run(ctx context.Context) {
 		}
 
 		observability.ObserveWorkerClaim(op.OperationType)
-		slog.InfoContext(ctx, "worker claimed operation",
+		operationCtx, span := observability.Tracer("worker").Start(ctx, "worker.execute_operation",
+			trace.WithAttributes(operationSpanAttributes(op)...),
+		)
+		slog.InfoContext(operationCtx, "worker claimed operation",
 			"component", "worker",
 			"operation.id", op.OperationID,
 			"operation.type", op.OperationType,
@@ -113,30 +134,34 @@ func (r *Runner) Run(ctx context.Context) {
 			"attempt", op.AttemptCount,
 		)
 		executionStartedAt := time.Now()
-		if err := r.Service.ExecuteOperation(ctx, op); err != nil {
+		if err := r.Service.ExecuteOperation(operationCtx, op); err != nil {
+			observability.RecordSpanError(span, err)
 			if op.AttemptCount >= r.MaxAttempts {
+				span.SetAttributes(attribute.String("operation.result", "failed"))
 				observability.ObserveWorkerExecution(op.OperationType, "failed", time.Since(executionStartedAt))
-				slog.ErrorContext(ctx, "worker failing operation permanently",
+				slog.ErrorContext(operationCtx, "worker failing operation permanently",
 					"component", "worker",
 					"operation.id", op.OperationID,
 					"operation.type", op.OperationType,
 					"attempt", op.AttemptCount,
 					"error.message", err.Error(),
 				)
-				if markErr := r.Service.MarkOperationExecutionFailed(ctx, op, err); markErr != nil {
-					slog.ErrorContext(ctx, "worker failed to mark final failure",
+				if markErr := r.Service.MarkOperationExecutionFailed(operationCtx, op, err); markErr != nil {
+					slog.ErrorContext(operationCtx, "worker failed to mark final failure",
 						"component", "worker",
 						"operation.id", op.OperationID,
 						"error.message", markErr.Error(),
 					)
 				}
+				span.End()
 				continue
 			}
 
+			span.SetAttributes(attribute.String("operation.result", "requeued"))
 			observability.ObserveWorkerExecution(op.OperationType, "requeued", time.Since(executionStartedAt))
 			observability.ObserveWorkerRequeue(op.OperationType)
 			nextAttemptAt := time.Now().UTC().Add(retryDelay(op.AttemptCount))
-			slog.WarnContext(ctx, "worker requeueing operation",
+			slog.WarnContext(operationCtx, "worker requeueing operation",
 				"component", "worker",
 				"operation.id", op.OperationID,
 				"operation.type", op.OperationType,
@@ -144,24 +169,29 @@ func (r *Runner) Run(ctx context.Context) {
 				"next_attempt_at", nextAttemptAt.Format(time.RFC3339),
 				"error.message", err.Error(),
 			)
-			if requeueErr := r.Service.RequeueOperation(ctx, op, err, nextAttemptAt); requeueErr != nil {
-				slog.ErrorContext(ctx, "worker failed to requeue operation",
+			if requeueErr := r.Service.RequeueOperation(operationCtx, op, err, nextAttemptAt); requeueErr != nil {
+				observability.RecordSpanError(span, requeueErr)
+				slog.ErrorContext(operationCtx, "worker failed to requeue operation",
 					"component", "worker",
 					"operation.id", op.OperationID,
 					"error.message", requeueErr.Error(),
 				)
-				if markErr := r.Service.MarkOperationExecutionFailed(ctx, op, fmt.Errorf("requeue failed after execution error %v: %w", requeueErr, err)); markErr != nil {
-					slog.ErrorContext(ctx, "worker failed to mark fallback failure",
+				if markErr := r.Service.MarkOperationExecutionFailed(operationCtx, op, fmt.Errorf("requeue failed after execution error %v: %w", requeueErr, err)); markErr != nil {
+					observability.RecordSpanError(span, markErr)
+					slog.ErrorContext(operationCtx, "worker failed to mark fallback failure",
 						"component", "worker",
 						"operation.id", op.OperationID,
 						"error.message", markErr.Error(),
 					)
 				}
 			}
+			span.End()
 			continue
 		}
 
+		span.SetAttributes(attribute.String("operation.result", "success"))
 		observability.ObserveWorkerExecution(op.OperationType, "success", time.Since(executionStartedAt))
+		span.End()
 	}
 }
 

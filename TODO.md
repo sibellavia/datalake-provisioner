@@ -320,7 +320,7 @@ These items should follow immediately after the core multi-bucket model exists.
 - [x] Switch to structured logging (`operationId`, `lakeId`, `bucketId`, `tenantId`, `siteId`, `attempt`)
 - [x] Add Prometheus metrics for operations, duration, retries, failures
 - [ ] Add request correlation across API and worker paths
-- [ ] Add OpenTelemetry tracing for HTTP, worker, and Ceph adapter paths
+- [x] Add OpenTelemetry tracing for HTTP, worker, service, and Ceph adapter paths
 - [ ] Persist and propagate async trace context across API -> operation payload -> worker execution
 
 **Implementation split**
@@ -332,9 +332,10 @@ These items should follow immediately after the core multi-bucket model exists.
   - add `/metrics`
   - instrument HTTP, worker, operation, readiness, and Ceph adapter metrics
   - keep metric labels low-cardinality
-- [ ] **PR-C**: OpenTelemetry tracing
+- [x] **PR-C1**: OpenTelemetry exporter/config + tracing instrumentation
   - add OTLP exporter/config
   - instrument HTTP, worker, service, and Ceph spans
+- [ ] **PR-C2**: async trace propagation
   - propagate `traceparent` / `tracestate` across async execution
 
 **Notes**
@@ -349,6 +350,7 @@ These items should follow immediately after the core multi-bucket model exists.
   - HTTP request logs now include request IDs and route/status/duration fields
   - service/worker logs now include structured operation/lake/bucket context
   - `/metrics` exposes Prometheus metrics for HTTP, readiness, worker, operation, and Ceph adapter paths
+  - OTLP tracing instrumentation is wired for HTTP, worker execution, service methods, and Ceph adapter calls
 
 **Done when**
 - Operators can answer: what failed, where, why, and for which tenant/lake/bucket
@@ -485,7 +487,7 @@ These features make the service feel more like a complete managed object storage
 8. [x] **PR-8**: Lake usage, bucket usage, and fleet-wide totals
 9. [x] **PR-A**: Observability foundation (structured JSON logs + `/ready`)
 10. [x] **PR-B**: Prometheus metrics
-11. [ ] **PR-C**: OpenTelemetry tracing + async trace propagation
+11. [ ] **PR-C**: OpenTelemetry tracing (`PR-C1` done, `PR-C2` async propagation pending)
 12. [ ] **PR-9**: Retries / timeouts / error classification (deferred for now)
 13. [ ] **PR-11**: Security hardening for Kong deployment model
 14. [ ] **PR-12**: Deployment + multi-DC configuration

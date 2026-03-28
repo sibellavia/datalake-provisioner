@@ -12,6 +12,8 @@ import (
 	"github.com/movincloud/datalake-provisioner/internal/ceph"
 	"github.com/movincloud/datalake-provisioner/internal/domain"
 	"github.com/movincloud/datalake-provisioner/internal/observability"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Repository interface {
@@ -87,13 +89,46 @@ type DeleteBucketRequest struct {
 	IdempotencyKey string
 }
 
+func startServiceSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+	return observability.Tracer("service").Start(ctx, name, trace.WithAttributes(attrs...))
+}
+
+func operationSpanAttributes(operationID, operationType, tenantID, lakeID, bucketID string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{}
+	if operationID != "" {
+		attrs = append(attrs, attribute.String("operation.id", operationID))
+	}
+	if operationType != "" {
+		attrs = append(attrs, attribute.String("operation.type", operationType))
+	}
+	if tenantID != "" {
+		attrs = append(attrs, attribute.String("tenant.id", tenantID))
+	}
+	if lakeID != "" {
+		attrs = append(attrs, attribute.String("lake.id", lakeID))
+	}
+	if bucketID != "" {
+		attrs = append(attrs, attribute.String("bucket.id", bucketID))
+	}
+	return attrs
+}
+
 func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) (storedOp domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.start_provision",
+		attribute.String("operation.type", "provision"),
+		attribute.String("tenant.id", req.TenantID),
+		attribute.String("user.id", req.UserID),
+		attribute.Int64("requested_size_gib", req.SizeGiB),
+	)
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveOperationStartRequest("provision", classifyOperationStartRequestResult(err))
 	}()
 
 	now := time.Now().UTC()
 	lakeID := uuid.NewString()
+	span.SetAttributes(attribute.String("lake.id", lakeID))
 
 	requestHash, err := hashProvisionRequest(req)
 	if err != nil {
@@ -132,6 +167,7 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
+	span.SetAttributes(attribute.String("operation.id", op.OperationID))
 
 	storedOp, err = s.Repo.StartProvisionOperation(ctx, lake, op, req.IdempotencyKey, requestHash)
 	if err != nil {
@@ -143,7 +179,15 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 }
 
 func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (storedOp domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.start_resize",
+		attribute.String("operation.type", "resize"),
+		attribute.String("tenant.id", req.TenantID),
+		attribute.String("lake.id", req.LakeID),
+		attribute.Int64("requested_size_gib", req.SizeGiB),
+	)
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveOperationStartRequest("resize", classifyOperationStartRequestResult(err))
 	}()
 
@@ -182,6 +226,7 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (store
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
+	span.SetAttributes(attribute.String("operation.id", op.OperationID))
 
 	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
@@ -193,7 +238,14 @@ func (s *Provisioner) StartResize(ctx context.Context, req ResizeRequest) (store
 }
 
 func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionRequest) (storedOp domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.start_deprovision",
+		attribute.String("operation.type", "deprovision"),
+		attribute.String("tenant.id", req.TenantID),
+		attribute.String("lake.id", req.LakeID),
+	)
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveOperationStartRequest("deprovision", classifyOperationStartRequestResult(err))
 	}()
 
@@ -239,6 +291,7 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
+	span.SetAttributes(attribute.String("operation.id", op.OperationID))
 
 	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
@@ -250,7 +303,15 @@ func (s *Provisioner) StartDeprovision(ctx context.Context, req DeprovisionReque
 }
 
 func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketRequest) (storedOp domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.start_bucket_create",
+		attribute.String("operation.type", "bucket_create"),
+		attribute.String("tenant.id", req.TenantID),
+		attribute.String("lake.id", req.LakeID),
+		attribute.String("bucket.logical_name", req.Name),
+	)
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveOperationStartRequest("bucket_create", classifyOperationStartRequestResult(err))
 	}()
 
@@ -265,6 +326,10 @@ func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketReq
 	now := time.Now().UTC()
 	bucketID := uuid.NewString()
 	bucketName := buildPhysicalBucketName(req.LakeID, bucketID, req.Name)
+	span.SetAttributes(
+		attribute.String("bucket.id", bucketID),
+		attribute.String("bucket.name", bucketName),
+	)
 
 	requestHash, err := hashCreateBucketRequest(req)
 	if err != nil {
@@ -306,6 +371,7 @@ func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketReq
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
+	span.SetAttributes(attribute.String("operation.id", op.OperationID))
 
 	storedOp, err = s.Repo.StartBucketCreateOperation(ctx, bucket, op, req.IdempotencyKey, requestHash)
 	if err != nil {
@@ -317,7 +383,15 @@ func (s *Provisioner) StartCreateBucket(ctx context.Context, req CreateBucketReq
 }
 
 func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketRequest) (storedOp domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.start_bucket_delete",
+		attribute.String("operation.type", "bucket_delete"),
+		attribute.String("tenant.id", req.TenantID),
+		attribute.String("lake.id", req.LakeID),
+		attribute.String("bucket.id", req.BucketID),
+	)
 	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
 		observability.ObserveOperationStartRequest("bucket_delete", classifyOperationStartRequestResult(err))
 	}()
 
@@ -367,6 +441,10 @@ func (s *Provisioner) StartDeleteBucket(ctx context.Context, req DeleteBucketReq
 		NextAttemptAt:  now,
 		UpdatedAt:      now,
 	}
+	span.SetAttributes(
+		attribute.String("operation.id", op.OperationID),
+		attribute.String("bucket.name", bucket.BucketName),
+	)
 
 	storedOp, err = s.Repo.StartOperation(ctx, op, req.IdempotencyKey, requestHash)
 	if err != nil {
@@ -433,7 +511,13 @@ func (s *Provisioner) MarkOperationExecutionFailed(ctx context.Context, op domai
 	return joinErr
 }
 
-func (s *Provisioner) ExecuteOperation(ctx context.Context, op domain.Operation) error {
+func (s *Provisioner) ExecuteOperation(ctx context.Context, op domain.Operation) (err error) {
+	ctx, span := startServiceSpan(ctx, "service.execute_operation", operationSpanAttributes(op.OperationID, op.OperationType, op.TenantID, op.LakeID, op.BucketID)...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
 	var payload operationPayload
 	if len(op.RequestPayload) > 0 {
 		if err := json.Unmarshal(op.RequestPayload, &payload); err != nil {
@@ -661,20 +745,32 @@ func classifyOperationStartRequestResult(err error) string {
 	}
 }
 
-func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID string) (domain.Operation, error) {
-	op, err := s.Repo.GetOperation(ctx, operationID, tenantID)
+func (s *Provisioner) GetOperation(ctx context.Context, operationID, tenantID string) (op domain.Operation, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_operation", operationSpanAttributes(operationID, "", tenantID, "", "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	op, err = s.Repo.GetOperation(ctx, operationID, tenantID)
 	if err != nil {
 		return domain.Operation{}, fmt.Errorf("get operation: %w", err)
 	}
 	return op, nil
 }
 
-func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error) {
+func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (lake domain.Lake, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_lake", operationSpanAttributes("", "", tenantID, lakeID, "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
 	if s.Ceph == nil {
 		return domain.Lake{}, fmt.Errorf("ceph adapter not configured")
 	}
 
-	lake, err := s.Repo.GetLake(ctx, lakeID, tenantID)
+	lake, err = s.Repo.GetLake(ctx, lakeID, tenantID)
 	if err != nil {
 		return domain.Lake{}, fmt.Errorf("get lake: %w", err)
 	}
@@ -694,12 +790,18 @@ func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (dom
 	return lake, nil
 }
 
-func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (domain.Bucket, error) {
+func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (bucket domain.Bucket, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_bucket", operationSpanAttributes("", "", tenantID, lakeID, bucketID)...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
 	if s.Ceph == nil {
 		return domain.Bucket{}, fmt.Errorf("ceph adapter not configured")
 	}
 
-	bucket, err := s.Repo.GetBucket(ctx, bucketID, lakeID, tenantID)
+	bucket, err = s.Repo.GetBucket(ctx, bucketID, lakeID, tenantID)
 	if err != nil {
 		return domain.Bucket{}, fmt.Errorf("get bucket: %w", err)
 	}
@@ -714,7 +816,13 @@ func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID 
 	return bucket, nil
 }
 
-func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) ([]domain.Bucket, error) {
+func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) (buckets []domain.Bucket, err error) {
+	ctx, span := startServiceSpan(ctx, "service.list_buckets", operationSpanAttributes("", "", tenantID, lakeID, "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
 	if s.Ceph == nil {
 		return nil, fmt.Errorf("ceph adapter not configured")
 	}
@@ -722,7 +830,7 @@ func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) 
 	if _, err := s.Repo.GetLake(ctx, lakeID, tenantID); err != nil {
 		return nil, fmt.Errorf("get lake: %w", err)
 	}
-	buckets, err := s.Repo.ListBuckets(ctx, lakeID, tenantID)
+	buckets, err = s.Repo.ListBuckets(ctx, lakeID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list buckets: %w", err)
 	}
@@ -740,7 +848,13 @@ func (s *Provisioner) ListBuckets(ctx context.Context, lakeID, tenantID string) 
 	return buckets, nil
 }
 
-func (s *Provisioner) GetFleetUsageSummary(ctx context.Context) (domain.FleetUsageSummary, error) {
+func (s *Provisioner) GetFleetUsageSummary(ctx context.Context) (summary domain.FleetUsageSummary, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_fleet_usage_summary")
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
 	if s.Ceph == nil {
 		return domain.FleetUsageSummary{}, fmt.Errorf("ceph adapter not configured")
 	}
@@ -762,7 +876,7 @@ func (s *Provisioner) GetFleetUsageSummary(ctx context.Context) (domain.FleetUsa
 		return domain.FleetUsageSummary{}, fmt.Errorf("list active lakes: %w", err)
 	}
 
-	summary := domain.FleetUsageSummary{
+	summary = domain.FleetUsageSummary{
 		LakeCount:           lakeCount,
 		BucketCount:         bucketCount,
 		TotalCommittedBytes: totalCommittedBytes,

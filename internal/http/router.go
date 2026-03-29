@@ -34,6 +34,8 @@ func NewRouter(d Deps) http.Handler {
 		v1.Get("/stats/summary", d.StatsHandler.GetSummary)
 		v1.Get("/tenant/summary", d.StatsHandler.GetTenantSummary)
 
+		v1.Post("/internal/lakes/{lakeId}/access", d.LakesHandler.GetInternalAccess)
+
 		v1.Get("/lakes", d.LakesHandler.ListLakes)
 		v1.Post("/lakes", d.LakesHandler.Provision)
 		v1.Post("/lakes/{lakeId}/resize", d.LakesHandler.Resize)

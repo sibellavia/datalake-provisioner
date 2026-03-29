@@ -257,6 +257,26 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/internal/lakes/{lakeId}/access:
+    post:
+      summary: Get backend-only temporary internal S3 access for a lake
+      description: Backend-only endpoint intended for trusted internal app/server usage, not direct browser or end-user access.
+      operationId: getLakeInternalAccess
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+      responses:
+        '200':
+          description: Backend-only internal lake S3 access lease
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LakeInternalAccess'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /v1/operations/{operationId}:
     get:
       summary: Get operation status
@@ -444,6 +464,23 @@ components:
         totalObjectCount:
           type: integer
           format: int64
+
+    LakeInternalAccess:
+      type: object
+      properties:
+        rgwUser:
+          type: string
+        s3Endpoint:
+          type: string
+        s3Region:
+          type: string
+        accessKeyId:
+          type: string
+        secretAccessKey:
+          type: string
+        leaseExpiresAt:
+          type: string
+          format: date-time
 
     Operation:
       type: object

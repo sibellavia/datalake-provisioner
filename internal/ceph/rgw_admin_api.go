@@ -104,6 +104,33 @@ func (a *RGWAdminAPIAdapter) EnsureLake(ctx context.Context, lakeID string) (lak
 	return LakeAccess{RGWUser: user.ID}, nil
 }
 
+func (a *RGWAdminAPIAdapter) GetLakeInternalAccess(ctx context.Context, lakeID string) (lakeAccess LakeInternalAccess, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.get_lake_internal_access", attribute.String("lake.id", lakeID))
+	startedAt := time.Now()
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+		observability.ObserveCephRequest("get_lake_internal_access", time.Since(startedAt), err)
+	}()
+
+	user, err := a.getLakeUserWithKey(ctx, lakeID)
+	if err != nil {
+		return LakeInternalAccess{}, err
+	}
+	if len(user.Keys) == 0 {
+		return LakeInternalAccess{}, fmt.Errorf("no s3 key available for user %s", user.ID)
+	}
+
+	return LakeInternalAccess{
+		RGWUser:         user.ID,
+		S3Endpoint:      a.Endpoint,
+		S3Region:        a.Region,
+		AccessKeyID:     user.Keys[0].AccessKey,
+		SecretAccessKey: user.Keys[0].SecretKey,
+		LeaseExpiresAt:  time.Now().UTC().Add(5 * time.Minute),
+	}, nil
+}
+
 func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) (err error) {
 	ctx, span := startCephSpan(ctx, "ceph.set_lake_quota",
 		attribute.String("lake.id", lakeID),

@@ -813,6 +813,35 @@ func (s *Provisioner) GetLake(ctx context.Context, lakeID, tenantID string) (lak
 	return lake, nil
 }
 
+func (s *Provisioner) GetLakeInternalAccess(ctx context.Context, lakeID, tenantID string) (access ceph.LakeInternalAccess, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_lake_internal_access", operationSpanAttributes("", "", tenantID, lakeID, "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	if s.Ceph == nil {
+		return ceph.LakeInternalAccess{}, fmt.Errorf("ceph adapter not configured")
+	}
+
+	lake, err := s.Repo.GetLake(ctx, lakeID, tenantID)
+	if err != nil {
+		return ceph.LakeInternalAccess{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady {
+		return ceph.LakeInternalAccess{}, fmt.Errorf("%w: internal access allowed only when lake is ready", domain.ErrInvalidState)
+	}
+	if lake.RGWUser == "" {
+		return ceph.LakeInternalAccess{}, fmt.Errorf("%w: lake storage identity not provisioned", domain.ErrInvalidState)
+	}
+
+	access, err = s.Ceph.GetLakeInternalAccess(ctx, lakeID)
+	if err != nil {
+		return ceph.LakeInternalAccess{}, fmt.Errorf("get lake internal access: %w", err)
+	}
+	return access, nil
+}
+
 func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (bucket domain.Bucket, err error) {
 	ctx, span := startServiceSpan(ctx, "service.get_bucket", operationSpanAttributes("", "", tenantID, lakeID, bucketID)...)
 	defer func() {

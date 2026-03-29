@@ -1,9 +1,21 @@
 package ceph
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type LakeAccess struct {
 	RGWUser string
+}
+
+type LakeInternalAccess struct {
+	RGWUser         string    `json:"rgwUser"`
+	S3Endpoint      string    `json:"s3Endpoint"`
+	S3Region        string    `json:"s3Region"`
+	AccessKeyID     string    `json:"accessKeyId"`
+	SecretAccessKey string    `json:"secretAccessKey"`
+	LeaseExpiresAt  time.Time `json:"leaseExpiresAt"`
 }
 
 type LakeUsage struct {
@@ -19,6 +31,7 @@ type BucketUsage struct {
 type Adapter interface {
 	CheckReady(ctx context.Context) error
 	EnsureLake(ctx context.Context, lakeID string) (LakeAccess, error)
+	GetLakeInternalAccess(ctx context.Context, lakeID string) (LakeInternalAccess, error)
 	SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) error
 	DeleteLake(ctx context.Context, lakeID string) error
 

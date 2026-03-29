@@ -156,6 +156,18 @@ func (h *LakesHandler) GetBucket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bucket)
 }
 
+func (h *LakesHandler) GetInternalAccess(w http.ResponseWriter, r *http.Request) {
+	lakeID := chi.URLParam(r, "lakeId")
+	tenant := tenantFromContext(r.Context())
+
+	access, err := h.Provisioner.GetLakeInternalAccess(r.Context(), lakeID, tenant)
+	if err != nil {
+		handleServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, access)
+}
+
 func (h *LakesHandler) DeleteBucket(w http.ResponseWriter, r *http.Request) {
 	lakeID := chi.URLParam(r, "lakeId")
 	bucketID := chi.URLParam(r, "bucketId")

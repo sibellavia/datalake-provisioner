@@ -57,7 +57,7 @@ Then:
 curl -X POST http://127.0.0.1:8081/v1/lakes \
   -H 'Content-Type: application/json' \
   -H 'X-Tenant: tenant-a' \
-  -d '{"userId":"user-1","sizeGiB":10}'
+  -d '{"sizeGiB":10}'
 ```
 
 ## Notes

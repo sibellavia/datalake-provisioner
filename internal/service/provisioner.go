@@ -62,7 +62,6 @@ type Provisioner struct {
 
 type ProvisionRequest struct {
 	TenantID       string
-	UserID         string
 	SizeGiB        int64
 	IdempotencyKey string
 }
@@ -122,7 +121,6 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 	ctx, span := startServiceSpan(ctx, "service.start_provision",
 		attribute.String("operation.type", "provision"),
 		attribute.String("tenant.id", req.TenantID),
-		attribute.String("user.id", req.UserID),
 		attribute.Int64("requested_size_gib", req.SizeGiB),
 	)
 	defer func() {
@@ -143,7 +141,6 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 	lake := domain.Lake{
 		LakeID:           lakeID,
 		TenantID:         req.TenantID,
-		UserID:           req.UserID,
 		RequestedSizeGiB: req.SizeGiB,
 		Status:           domain.LakeStatusProvisioning,
 		CreatedAt:        now,
@@ -154,7 +151,6 @@ func (s *Provisioner) StartProvision(ctx context.Context, req ProvisionRequest) 
 		Type:     "provision",
 		TenantID: req.TenantID,
 		LakeID:   lakeID,
-		UserID:   req.UserID,
 		SizeGiB:  req.SizeGiB,
 	})
 	if err != nil {
@@ -562,7 +558,7 @@ func (s *Provisioner) executeProvision(ctx context.Context, op domain.Operation,
 	if s.Ceph == nil {
 		return fmt.Errorf("ceph adapter not configured")
 	}
-	if payload.LakeID == "" || payload.TenantID == "" || payload.UserID == "" || payload.SizeGiB <= 0 {
+	if payload.LakeID == "" || payload.TenantID == "" || payload.SizeGiB <= 0 {
 		return fmt.Errorf("invalid provision payload")
 	}
 

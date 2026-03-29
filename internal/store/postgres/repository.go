@@ -30,13 +30,12 @@ func (r *Repository) CreateLake(ctx context.Context, lake domain.Lake) error {
 func (r *Repository) GetLake(ctx context.Context, lakeID, tenantID string) (domain.Lake, error) {
 	var lake domain.Lake
 	err := r.DB.QueryRow(ctx, `
-		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
+		SELECT lake_id, tenant_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
 		FROM lakes
 		WHERE lake_id = $1 AND tenant_id = $2
 	`, lakeID, tenantID).Scan(
 		&lake.LakeID,
 		&lake.TenantID,
-		&lake.UserID,
 		&lake.RequestedSizeGiB,
 		&lake.Status,
 		&lake.RGWUser,
@@ -176,7 +175,7 @@ func (r *Repository) SumCommittedQuotaBytesByTenant(ctx context.Context, tenantI
 
 func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error) {
 	rows, err := r.DB.Query(ctx, `
-		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
+		SELECT lake_id, tenant_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
 		FROM lakes
 		WHERE status <> 'deleted'
 		ORDER BY created_at ASC
@@ -192,7 +191,6 @@ func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
 		if err := rows.Scan(
 			&lake.LakeID,
 			&lake.TenantID,
-			&lake.UserID,
 			&lake.RequestedSizeGiB,
 			&lake.Status,
 			&lake.RGWUser,
@@ -212,7 +210,7 @@ func (r *Repository) ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
 
 func (r *Repository) ListActiveLakesByTenant(ctx context.Context, tenantID string) ([]domain.Lake, error) {
 	rows, err := r.DB.Query(ctx, `
-		SELECT lake_id, tenant_id, user_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
+		SELECT lake_id, tenant_id, requested_size_gib, status, COALESCE(rgw_user,''), COALESCE(last_error,''), created_at, updated_at
 		FROM lakes
 		WHERE tenant_id = $1 AND status <> 'deleted'
 		ORDER BY created_at ASC
@@ -228,7 +226,6 @@ func (r *Repository) ListActiveLakesByTenant(ctx context.Context, tenantID strin
 		if err := rows.Scan(
 			&lake.LakeID,
 			&lake.TenantID,
-			&lake.UserID,
 			&lake.RequestedSizeGiB,
 			&lake.Status,
 			&lake.RGWUser,
@@ -629,9 +626,9 @@ func (r *Repository) MarkBucketDeleteFailed(ctx context.Context, bucketID, lakeI
 
 func (r *Repository) insertLake(ctx context.Context, exec execer, lake domain.Lake) error {
 	_, err := exec.Exec(ctx, `
-		INSERT INTO lakes (lake_id, tenant_id, user_id, requested_size_gib, status, rgw_user, last_error, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, lake.LakeID, lake.TenantID, lake.UserID, lake.RequestedSizeGiB, lake.Status, nullable(lake.RGWUser), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
+		INSERT INTO lakes (lake_id, tenant_id, requested_size_gib, status, rgw_user, last_error, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	`, lake.LakeID, lake.TenantID, lake.RequestedSizeGiB, lake.Status, nullable(lake.RGWUser), nullable(lake.LastError), lake.CreatedAt, lake.UpdatedAt)
 	return err
 }
 

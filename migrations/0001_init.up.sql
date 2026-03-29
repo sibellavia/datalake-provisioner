@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS lakes (
     lake_id              UUID PRIMARY KEY,
     tenant_id            TEXT NOT NULL,
-    user_id              TEXT NOT NULL,
     requested_size_gib   BIGINT NOT NULL CHECK (requested_size_gib > 0),
     status               TEXT NOT NULL CHECK (status IN ('provisioning','ready','resizing','deleting','failed','deleted')),
     url                  TEXT,

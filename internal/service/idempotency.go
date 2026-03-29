@@ -9,7 +9,6 @@ import (
 type provisionIdempotencyInput struct {
 	Type     string `json:"type"`
 	TenantID string `json:"tenantId"`
-	UserID   string `json:"userId"`
 	SizeGiB  int64  `json:"sizeGiB"`
 }
 
@@ -44,7 +43,6 @@ func hashProvisionRequest(req ProvisionRequest) (string, error) {
 	return hashRequest(provisionIdempotencyInput{
 		Type:     "provision",
 		TenantID: req.TenantID,
-		UserID:   req.UserID,
 		SizeGiB:  req.SizeGiB,
 	})
 }

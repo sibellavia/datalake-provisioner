@@ -1,0 +1,2 @@
+ALTER TABLE lakes
+    DROP COLUMN IF EXISTS user_id;

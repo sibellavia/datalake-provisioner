@@ -8,7 +8,6 @@ data:
     CREATE TABLE IF NOT EXISTS lakes (
         lake_id              UUID PRIMARY KEY,
         tenant_id            TEXT NOT NULL,
-        user_id              TEXT NOT NULL,
         requested_size_gib   BIGINT NOT NULL CHECK (requested_size_gib > 0),
         status               TEXT NOT NULL CHECK (status IN ('provisioning','ready','resizing','deleting','failed','deleted')),
         url                  TEXT,
@@ -115,3 +114,7 @@ data:
     CREATE UNIQUE INDEX IF NOT EXISTS uq_buckets_active_name_per_lake
         ON buckets (lake_id, name)
         WHERE status <> 'deleted';
+
+  0007_remove_lake_user_id.up.sql: |
+    ALTER TABLE lakes
+        DROP COLUMN IF EXISTS user_id;

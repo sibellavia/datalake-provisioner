@@ -336,11 +336,8 @@ components:
   schemas:
     ProvisionLakeRequest:
       type: object
-      required: [userId, sizeGiB]
+      required: [sizeGiB]
       properties:
-        userId:
-          type: string
-          example: user-123
         sizeGiB:
           type: integer
           format: int64
@@ -371,8 +368,6 @@ components:
         lakeId:
           type: string
         tenantId:
-          type: string
-        userId:
           type: string
         requestedSizeGiB:
           type: integer

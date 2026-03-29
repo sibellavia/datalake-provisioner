@@ -7,7 +7,6 @@ type operationPayload struct {
 	TenantID   string `json:"tenantId"`
 	LakeID     string `json:"lakeId,omitempty"`
 	BucketID   string `json:"bucketId,omitempty"`
-	UserID     string `json:"userId,omitempty"`
 	Name       string `json:"name,omitempty"`
 	BucketName string `json:"bucketName,omitempty"`
 	SizeGiB    int64  `json:"sizeGiB,omitempty"`

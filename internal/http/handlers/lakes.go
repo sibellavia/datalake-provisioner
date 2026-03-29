@@ -17,8 +17,7 @@ type LakesHandler struct {
 }
 
 type provisionRequest struct {
-	UserID  string `json:"userId"`
-	SizeGiB int64  `json:"sizeGiB"`
+	SizeGiB int64 `json:"sizeGiB"`
 }
 
 type resizeRequest struct {
@@ -48,14 +47,13 @@ func (h *LakesHandler) Provision(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if req.UserID == "" || req.SizeGiB <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "userId and sizeGiB are required"})
+	if req.SizeGiB <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "sizeGiB must be > 0"})
 		return
 	}
 
 	op, err := h.Provisioner.StartProvision(r.Context(), service.ProvisionRequest{
 		TenantID:       tenantFromContext(r.Context()),
-		UserID:         req.UserID,
 		SizeGiB:        req.SizeGiB,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 	})

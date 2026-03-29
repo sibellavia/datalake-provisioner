@@ -123,7 +123,7 @@ datalake-provisioner/
 5. on errors: operation is retried up to `WORKER_MAX_ATTEMPTS`, then lake and operation are marked `failed`
 
 ## End-to-end workflow (lab validated)
-1. User (or Movincloud) requests provisioning with `tenant`, `userId`, `sizeGiB`.
+1. User (or Movincloud) requests provisioning with `tenant` and `sizeGiB`.
 2. Request reaches `datalake-provisioner` API (`POST /v1/lakes`) with:
    - `X-Tenant`
 3. Provisioner stores operation/lake state in PostgreSQL.
@@ -215,7 +215,7 @@ curl http://localhost:8081/metrics
 curl -X POST http://localhost:8081/v1/lakes \
   -H 'Content-Type: application/json' \
   -H 'X-Tenant: tenant-a' \
-  -d '{"userId":"user-1","sizeGiB":10}'
+  -d '{"sizeGiB":10}'
 ```
 
 Poll operation:

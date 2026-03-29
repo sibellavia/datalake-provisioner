@@ -38,7 +38,6 @@ const (
 type Lake struct {
 	LakeID           string     `json:"lakeId"`
 	TenantID         string     `json:"tenantId"`
-	UserID           string     `json:"userId"`
 	RequestedSizeGiB int64      `json:"requestedSizeGiB"`
 	Status           LakeStatus `json:"status"`
 	RGWUser          string     `json:"rgwUser,omitempty"`

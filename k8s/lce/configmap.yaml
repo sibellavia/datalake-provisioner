@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: datalake-provisioner-config
+  namespace: datalake
+data:
+  HTTP_PORT: "8081"
+  READ_HEADER_TIMEOUT_SECONDS: "5"
+  READY_TIMEOUT_SECONDS: "3"
+  LOG_FORMAT: "json"
+  LOG_LEVEL: "info"
+  OTEL_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: ""
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+
+  WORKER_ENABLED: "true"
+  WORKER_POLL_INTERVAL_SECONDS: "2"
+  WORKER_STALE_AFTER_SECONDS: "120"
+  WORKER_MAX_ATTEMPTS: "3"
+
+  RGW_ENDPOINT: "http://100.114.100.63:7480"
+  RGW_ADMIN_PATH: "/admin"
+  RGW_REGION: "us-east-1"
+  RGW_INSECURE_SKIP_VERIFY: "false"

@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datalake-provisioner
+  namespace: datalake
+  labels:
+    app: datalake-provisioner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: datalake-provisioner
+  template:
+    metadata:
+      labels:
+        app: datalake-provisioner
+    spec:
+      imagePullSecrets:
+        - name: acr-creds
+      containers:
+        - name: datalake-provisioner
+          image: leonardoengcr.azurecr.io/leonardo/datalake-provisioner:0.3.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: datalake-provisioner-config
+            - secretRef:
+                name: datalake-provisioner-secrets
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        - name: tailscale
+          image: ghcr.io/tailscale/tailscale:latest
+          imagePullPolicy: Always
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: tailscale-auth
+                  key: TS_AUTHKEY
+            - name: TS_HOSTNAME
+              value: datalake-provisioner-sidecar
+            - name: TS_USERSPACE
+              value: "false"
+            - name: TS_KUBE_SECRET
+            - name: TS_STATE_DIR
+              value: /tmp
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault

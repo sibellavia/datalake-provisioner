@@ -19,7 +19,7 @@ spec:
         - name: acr-creds
       containers:
         - name: datalake-provisioner
-          image: leonardoengcr.azurecr.io/leonardo/datalake-provisioner:0.3.0
+          image: leonardoengcr.azurecr.io/leonardo/datalake-provisioner:0.4.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -60,33 +60,6 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
-        - name: tailscale
-          image: ghcr.io/tailscale/tailscale:latest
-          imagePullPolicy: Always
-          env:
-            - name: TS_AUTHKEY
-              valueFrom:
-                secretKeyRef:
-                  name: tailscale-auth
-                  key: TS_AUTHKEY
-            - name: TS_HOSTNAME
-              value: datalake-provisioner-sidecar
-            - name: TS_USERSPACE
-              value: "false"
-            - name: TS_KUBE_SECRET
-            - name: TS_STATE_DIR
-              value: /tmp
-          resources:
-            requests:
-              cpu: 50m
-              memory: 32Mi
-            limits:
-              cpu: 100m
-              memory: 64Mi
-          securityContext:
-            capabilities:
-              add:
-                - NET_ADMIN
       securityContext:
         seccompProfile:
           type: RuntimeDefault

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -241,6 +242,78 @@ func (r *Repository) ListActiveLakesByTenant(ctx context.Context, tenantID strin
 		return nil, err
 	}
 	return lakes, nil
+}
+
+func (r *Repository) GetActiveLakeCustomerS3Credential(ctx context.Context, lakeID, tenantID string) (domain.LakeCustomerS3Credential, error) {
+	var credential domain.LakeCustomerS3Credential
+	err := r.DB.QueryRow(ctx, `
+		SELECT credential_id::text, lake_id::text, tenant_id, access_key_id, status, created_at, revoked_at
+		FROM lake_customer_s3_credentials
+		WHERE lake_id = $1 AND tenant_id = $2 AND status = 'active'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, lakeID, tenantID).Scan(
+		&credential.CredentialID,
+		&credential.LakeID,
+		&credential.TenantID,
+		&credential.AccessKeyID,
+		&credential.Status,
+		&credential.CreatedAt,
+		&credential.RevokedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.LakeCustomerS3Credential{}, domain.ErrNotFound
+	}
+	return credential, err
+}
+
+func (r *Repository) SetLakeCustomerS3CredentialActive(ctx context.Context, lakeID, tenantID, accessKeyID string) (domain.LakeCustomerS3Credential, error) {
+	credential := domain.LakeCustomerS3Credential{
+		CredentialID: uuid.NewString(),
+		LakeID:       lakeID,
+		TenantID:     tenantID,
+		AccessKeyID:  accessKeyID,
+		Status:       "active",
+	}
+
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE lake_customer_s3_credentials
+			SET status = 'revoked', revoked_at = NOW()
+			WHERE lake_id = $1 AND tenant_id = $2 AND status = 'active'
+		`, lakeID, tenantID); err != nil {
+			return err
+		}
+
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO lake_customer_s3_credentials (credential_id, lake_id, tenant_id, access_key_id, status, created_at, revoked_at)
+			VALUES ($1, $2, $3, $4, 'active', NOW(), NULL)
+			ON CONFLICT (access_key_id)
+			DO UPDATE SET
+				lake_id = EXCLUDED.lake_id,
+				tenant_id = EXCLUDED.tenant_id,
+				status = 'active',
+				revoked_at = NULL
+			RETURNING credential_id::text, lake_id::text, tenant_id, access_key_id, status, created_at, revoked_at
+		`, credential.CredentialID, lakeID, tenantID, accessKeyID).Scan(
+			&credential.CredentialID,
+			&credential.LakeID,
+			&credential.TenantID,
+			&credential.AccessKeyID,
+			&credential.Status,
+			&credential.CreatedAt,
+			&credential.RevokedAt,
+		); err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return domain.LakeCustomerS3Credential{}, err
+	}
+
+	return credential, nil
 }
 
 func (r *Repository) StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error) {

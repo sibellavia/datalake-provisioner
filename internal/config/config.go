@@ -25,12 +25,13 @@ type Config struct {
 	WorkerStaleAfter   time.Duration
 	WorkerMaxAttempts  int
 
-	RGWEndpoint           string
-	RGWAdminPath          string
-	RGWRegion             string
-	RGWAccessKeyID        string
-	RGWSecretAccessKey    string
-	RGWInsecureSkipVerify bool
+	RGWEndpoint             string
+	RGWAdminPath            string
+	RGWRegion               string
+	RGWS3AdvertisedEndpoint string
+	RGWAccessKeyID          string
+	RGWSecretAccessKey      string
+	RGWInsecureSkipVerify   bool
 }
 
 func Load() Config {
@@ -51,6 +52,7 @@ func Load() Config {
 		RGWEndpoint:              getEnv("RGW_ENDPOINT", "http://localhost:8080"),
 		RGWAdminPath:             getEnv("RGW_ADMIN_PATH", "/admin"),
 		RGWRegion:                getEnv("RGW_REGION", "us-east-1"),
+		RGWS3AdvertisedEndpoint:  getEnv("RGW_S3_ADVERTISED_ENDPOINT", ""),
 		RGWAccessKeyID:           getEnv("RGW_ACCESS_KEY_ID", ""),
 		RGWSecretAccessKey:       getEnv("RGW_SECRET_ACCESS_KEY", ""),
 		RGWInsecureSkipVerify:    getEnvBool("RGW_INSECURE_SKIP_VERIFY", false),

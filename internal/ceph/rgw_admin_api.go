@@ -20,16 +20,17 @@ import (
 )
 
 type RGWAdminAPIAdapter struct {
-	Endpoint           string
-	AdminPath          string
-	Region             string
-	InsecureSkipVerify bool
+	Endpoint             string
+	AdminPath            string
+	Region               string
+	S3AdvertisedEndpoint string
+	InsecureSkipVerify   bool
 
 	httpClient  *http.Client
 	adminClient *rgwadmin.API
 }
 
-func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAccessKey string, insecureSkipVerify bool) (*RGWAdminAPIAdapter, error) {
+func NewRGWAdminAPIAdapter(endpoint, adminPath, region, s3AdvertisedEndpoint, accessKeyID, secretAccessKey string, insecureSkipVerify bool) (*RGWAdminAPIAdapter, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("rgw endpoint is required")
 	}
@@ -49,6 +50,9 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	if region == "" {
 		region = "us-east-1"
 	}
+	if s3AdvertisedEndpoint == "" {
+		s3AdvertisedEndpoint = endpoint
+	}
 
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec
@@ -60,12 +64,13 @@ func NewRGWAdminAPIAdapter(endpoint, adminPath, region, accessKeyID, secretAcces
 	}
 
 	return &RGWAdminAPIAdapter{
-		Endpoint:           strings.TrimRight(endpoint, "/"),
-		AdminPath:          adminPath,
-		Region:             region,
-		InsecureSkipVerify: insecureSkipVerify,
-		httpClient:         httpClient,
-		adminClient:        adminClient,
+		Endpoint:             strings.TrimRight(endpoint, "/"),
+		AdminPath:            adminPath,
+		Region:               region,
+		S3AdvertisedEndpoint: strings.TrimRight(s3AdvertisedEndpoint, "/"),
+		InsecureSkipVerify:   insecureSkipVerify,
+		httpClient:           httpClient,
+		adminClient:          adminClient,
 	}, nil
 }
 
@@ -129,6 +134,57 @@ func (a *RGWAdminAPIAdapter) GetLakeInternalAccess(ctx context.Context, lakeID s
 		SecretAccessKey: user.Keys[0].SecretKey,
 		LeaseExpiresAt:  time.Now().UTC().Add(5 * time.Minute),
 	}, nil
+}
+
+func (a *RGWAdminAPIAdapter) EnsureLakeCustomerS3Credential(ctx context.Context, lakeID, currentAccessKeyID string) (credential LakeS3Credential, created bool, err error) {
+	ctx, span := startCephSpan(ctx, "ceph.ensure_lake_customer_s3_credential", attribute.String("lake.id", lakeID))
+	startedAt := time.Now()
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+		observability.ObserveCephRequest("ensure_lake_customer_s3_credential", time.Since(startedAt), err)
+	}()
+
+	user, err := a.getLakeUserWithKey(ctx, lakeID)
+	if err != nil {
+		return LakeS3Credential{}, false, err
+	}
+
+	if currentAccessKeyID != "" {
+		for _, key := range user.Keys {
+			if key.AccessKey == currentAccessKeyID {
+				return LakeS3Credential{
+					RGWUser:         user.ID,
+					S3Endpoint:      a.S3AdvertisedEndpoint,
+					S3Region:        a.Region,
+					AccessKeyID:     key.AccessKey,
+					SecretAccessKey: key.SecretKey,
+				}, false, nil
+			}
+		}
+	}
+
+	generateKey := true
+	newKeys, err := a.adminClient.CreateKey(ctx, rgwadmin.UserKeySpec{
+		UID:         user.ID,
+		KeyType:     "s3",
+		GenerateKey: &generateKey,
+	})
+	if err != nil {
+		return LakeS3Credential{}, false, fmt.Errorf("create customer s3 key for user %s: %w", user.ID, err)
+	}
+	if newKeys == nil || len(*newKeys) == 0 {
+		return LakeS3Credential{}, false, fmt.Errorf("customer s3 key creation returned empty key list for user %s", user.ID)
+	}
+	newKey := (*newKeys)[len(*newKeys)-1]
+
+	return LakeS3Credential{
+		RGWUser:         user.ID,
+		S3Endpoint:      a.S3AdvertisedEndpoint,
+		S3Region:        a.Region,
+		AccessKeyID:     newKey.AccessKey,
+		SecretAccessKey: newKey.SecretKey,
+	}, true, nil
 }
 
 func (a *RGWAdminAPIAdapter) SetLakeQuota(ctx context.Context, lakeID string, sizeGiB int64) (err error) {

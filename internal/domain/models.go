@@ -87,3 +87,13 @@ type FleetUsageSummary struct {
 	TotalCommittedBytes int64 `json:"totalCommittedBytes"`
 	TotalObjectCount    int64 `json:"totalObjectCount"`
 }
+
+type LakeCustomerS3Credential struct {
+	CredentialID string
+	LakeID       string
+	TenantID     string
+	AccessKeyID  string
+	Status       string
+	CreatedAt    time.Time
+	RevokedAt    *time.Time
+}

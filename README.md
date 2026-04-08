@@ -76,12 +76,18 @@ datalake-provisioner/
 - `WORKER_MAX_ATTEMPTS` (default: `3`)
 
 ### Ceph RGW Admin API
-- `RGW_ENDPOINT` (e.g. `http://rook-ceph-rgw...:8080`)
+- `RGW_ENDPOINT` (internal/admin RGW endpoint used by provisioner, e.g. `http://rook-ceph-rgw...:8080`)
 - `RGW_ADMIN_PATH` (default and currently required: `/admin`)
 - `RGW_REGION` (default: `us-east-1`)
+- `RGW_S3_ADVERTISED_ENDPOINT` (customer-facing S3 endpoint returned by customer S3 access API; defaults to `RGW_ENDPOINT` when unset)
 - `RGW_ACCESS_KEY_ID` (admin user)
 - `RGW_SECRET_ACCESS_KEY` (admin user)
 - `RGW_INSECURE_SKIP_VERIFY` (`true|false`)
+
+### Critical endpoint split (production)
+- `RGW_ENDPOINT` is **internal** and may expose `/admin`.
+- `RGW_S3_ADVERTISED_ENDPOINT` is **customer-facing** (for SDK/CLI) and must be a stable HTTPS host (e.g. `https://s3.leonardocloudeverywhere.com`).
+- Do **not** return internal RGW node/Tailscale endpoints to customers.
 
 ## Request headers
 - `X-Tenant`: tenant context header
@@ -90,6 +96,7 @@ datalake-provisioner/
 ## Security note
 - The service currently has no built-in authn/authz layer.
 - It should be exposed only through trusted private network paths / gateway infrastructure.
+- Keep RGW Admin Ops (`/admin`) reachable only from trusted internal paths (provisioner/backend), not from the public customer S3 endpoint.
 
 ## Health and readiness
 - `/health`: lightweight liveness endpoint
@@ -121,6 +128,20 @@ datalake-provisioner/
    - mark operation `success`
 4. a newly provisioned lake is an **empty boundary** with quota and internal storage credentials; buckets will be explicit child resources
 5. on errors: operation is retried up to `WORKER_MAX_ATTEMPTS`, then lake and operation are marked `failed`
+
+## Customer S3 credential endpoint (implemented)
+- `POST /v1/internal/lakes/{lakeId}/customer-s3-access`
+- Requires `X-Tenant`.
+- Lake must be `ready`.
+- Returns customer-facing S3 material:
+  - `lakeId`, `rgwUser`, `s3Endpoint`, `s3Region`, `accessKeyId`, `secretAccessKey`, `issuedAt`, `credentialStatus`.
+- `s3Endpoint` value is always derived from `RGW_S3_ADVERTISED_ENDPOINT`.
+
+### Important credential semantics
+- Model remains: `1 lake = 1 RGW user`.
+- Internal and customer credentials are tracked as separate product concerns.
+- Current behavior can reuse an existing RGW user key when first materializing customer access if no active customer key metadata exists yet.
+- If strict guarantee is required (`customer key` always distinct from historical internal key), enforce an explicit forced key creation/rotation policy.
 
 ## End-to-end workflow (lab validated)
 1. User (or Movincloud) requests provisioning with `tenant` and `sizeGiB`.
@@ -161,6 +182,35 @@ datalake-provisioner/
 - Built/pushed amd64 image: `dev3at/datalake-provisioner:0.1.1`
 - Set numeric security context (`runAsUser/runAsGroup=65532`) for distroless container compatibility
 - Created `datalake` DB manually (existing PG volume), then reran migration job
+
+## Customer-access workflow (recommended)
+1. Platform/Helm hook provisions the lake (`POST /v1/lakes`).
+2. Poll operation until lake is `ready`.
+3. Call `POST /v1/internal/lakes/{lakeId}/customer-s3-access`.
+4. Store returned S3 creds in tenant secret store (K8s Secret / platform vault).
+5. Return to customer:
+   - `s3Endpoint` (advertised endpoint),
+   - `s3Region`,
+   - `accessKeyId`,
+   - `secretAccessKey`.
+
+## Exposing RGW to the internet (domain + DNS)
+Assuming domain `leonardocloudeverywhere.com` and subdomain `s3.leonardocloudeverywhere.com`:
+
+1. Create a public entrypoint (LB/Ingress/Gateway) that can reach RGW data-plane.
+2. Create DNS record:
+   - `A` / `CNAME` for `s3.leonardocloudeverywhere.com` -> public entrypoint.
+3. Configure TLS certificate for `s3.leonardocloudeverywhere.com`.
+4. Proxy S3 traffic to RGW (`http://<rgw-internal-ip>:7480`) with minimal rewrites.
+5. Block `/admin` on this public endpoint.
+6. Set `RGW_S3_ADVERTISED_ENDPOINT=https://s3.leonardocloudeverywhere.com` in provisioner config.
+
+### Kong / Ingress notes
+- Prefer **host-based** route: `s3.leonardocloudeverywhere.com`.
+- Avoid path-prefix style (`/s3`) for real S3 clients.
+- Keep proxy behavior transparent (headers/query/body/signature-sensitive requests).
+- Ensure large body / long timeout settings for multipart uploads.
+- Explicitly deny or do not route `/admin` externally.
 
 ## Local run
 1. Run PostgreSQL and create DB.
@@ -230,6 +280,25 @@ Get lake:
 ```bash
 curl -H 'X-Tenant: tenant-a' \
   http://localhost:8081/v1/lakes/<lakeId>
+```
+
+Validate returned customer key against RGW/S3 endpoint:
+
+```bash
+# 1) Request customer S3 access
+ACCESS_JSON=$(curl -sS -X POST \
+  -H 'X-Tenant: tenant-a' \
+  http://localhost:8081/v1/internal/lakes/<lakeId>/customer-s3-access)
+
+# 2) Extract values
+ENDPOINT=$(echo "$ACCESS_JSON" | jq -r .s3Endpoint)
+REGION=$(echo "$ACCESS_JSON" | jq -r .s3Region)
+AK=$(echo "$ACCESS_JSON" | jq -r .accessKeyId)
+SK=$(echo "$ACCESS_JSON" | jq -r .secretAccessKey)
+
+# 3) Use standard AWS CLI against Ceph RGW
+AWS_ACCESS_KEY_ID="$AK" AWS_SECRET_ACCESS_KEY="$SK" \
+aws --region "$REGION" --endpoint-url "$ENDPOINT" s3 ls
 ```
 
 ### Notes for Compose usage

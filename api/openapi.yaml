@@ -277,6 +277,26 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/internal/lakes/{lakeId}/customer-s3-access:
+    post:
+      summary: Ensure and return customer-facing S3 access for a lake
+      description: Internal platform endpoint that ensures an active customer S3 key exists for the lake and returns it.
+      operationId: getLakeCustomerS3Access
+      parameters:
+        - $ref: '#/components/parameters/TenantHeader'
+        - $ref: '#/components/parameters/LakeIdPath'
+      responses:
+        '200':
+          description: Active customer S3 credential for the lake
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LakeCustomerS3Access'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /v1/operations/{operationId}:
     get:
       summary: Get operation status
@@ -481,6 +501,28 @@ components:
         leaseExpiresAt:
           type: string
           format: date-time
+
+    LakeCustomerS3Access:
+      type: object
+      properties:
+        lakeId:
+          type: string
+        rgwUser:
+          type: string
+        s3Endpoint:
+          type: string
+        s3Region:
+          type: string
+        accessKeyId:
+          type: string
+        secretAccessKey:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        credentialStatus:
+          type: string
+          enum: [active]
 
     Operation:
       type: object

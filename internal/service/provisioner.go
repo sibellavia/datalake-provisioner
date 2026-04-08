@@ -35,6 +35,9 @@ type Repository interface {
 	ListActiveLakes(ctx context.Context) ([]domain.Lake, error)
 	ListActiveLakesByTenant(ctx context.Context, tenantID string) ([]domain.Lake, error)
 
+	GetActiveLakeCustomerS3Credential(ctx context.Context, lakeID, tenantID string) (domain.LakeCustomerS3Credential, error)
+	SetLakeCustomerS3CredentialActive(ctx context.Context, lakeID, tenantID, accessKeyID string) (domain.LakeCustomerS3Credential, error)
+
 	StartProvisionOperation(ctx context.Context, lake domain.Lake, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartBucketCreateOperation(ctx context.Context, bucket domain.Bucket, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
 	StartOperation(ctx context.Context, op domain.Operation, idempotencyKey, requestHash string) (domain.Operation, error)
@@ -840,6 +843,62 @@ func (s *Provisioner) GetLakeInternalAccess(ctx context.Context, lakeID, tenantI
 		return ceph.LakeInternalAccess{}, fmt.Errorf("get lake internal access: %w", err)
 	}
 	return access, nil
+}
+
+func (s *Provisioner) GetLakeCustomerS3Access(ctx context.Context, lakeID, tenantID string) (access ceph.LakeCustomerS3Access, err error) {
+	ctx, span := startServiceSpan(ctx, "service.get_lake_customer_s3_access", operationSpanAttributes("", "", tenantID, lakeID, "")...)
+	defer func() {
+		observability.RecordSpanError(span, err)
+		span.End()
+	}()
+
+	if s.Ceph == nil {
+		return ceph.LakeCustomerS3Access{}, fmt.Errorf("ceph adapter not configured")
+	}
+
+	lake, err := s.Repo.GetLake(ctx, lakeID, tenantID)
+	if err != nil {
+		return ceph.LakeCustomerS3Access{}, fmt.Errorf("get lake: %w", err)
+	}
+	if lake.Status != domain.LakeStatusReady {
+		return ceph.LakeCustomerS3Access{}, fmt.Errorf("%w: customer s3 access allowed only when lake is ready", domain.ErrInvalidState)
+	}
+	if lake.RGWUser == "" {
+		return ceph.LakeCustomerS3Access{}, fmt.Errorf("%w: lake storage identity not provisioned", domain.ErrInvalidState)
+	}
+
+	var currentAccessKeyID string
+	currentCredential, err := s.Repo.GetActiveLakeCustomerS3Credential(ctx, lakeID, tenantID)
+	if err != nil {
+		if !errors.Is(err, domain.ErrNotFound) {
+			return ceph.LakeCustomerS3Access{}, fmt.Errorf("get active customer s3 credential: %w", err)
+		}
+	} else {
+		currentAccessKeyID = currentCredential.AccessKeyID
+	}
+
+	s3Credential, created, err := s.Ceph.EnsureLakeCustomerS3Credential(ctx, lakeID, currentAccessKeyID)
+	if err != nil {
+		return ceph.LakeCustomerS3Access{}, fmt.Errorf("ensure lake customer s3 credential: %w", err)
+	}
+
+	if created || currentAccessKeyID == "" || currentAccessKeyID != s3Credential.AccessKeyID {
+		currentCredential, err = s.Repo.SetLakeCustomerS3CredentialActive(ctx, lakeID, tenantID, s3Credential.AccessKeyID)
+		if err != nil {
+			return ceph.LakeCustomerS3Access{}, fmt.Errorf("set active customer s3 credential: %w", err)
+		}
+	}
+
+	return ceph.LakeCustomerS3Access{
+		LakeID:           lakeID,
+		RGWUser:          s3Credential.RGWUser,
+		S3Endpoint:       s3Credential.S3Endpoint,
+		S3Region:         s3Credential.S3Region,
+		AccessKeyID:      s3Credential.AccessKeyID,
+		SecretAccessKey:  s3Credential.SecretAccessKey,
+		IssuedAt:         currentCredential.CreatedAt,
+		CredentialStatus: "active",
+	}, nil
 }
 
 func (s *Provisioner) GetBucket(ctx context.Context, bucketID, lakeID, tenantID string) (bucket domain.Bucket, err error) {

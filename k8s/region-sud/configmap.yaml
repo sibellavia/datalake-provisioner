@@ -21,4 +21,5 @@ data:
   RGW_ENDPOINT: "http://192.168.3.251:7480"
   RGW_ADMIN_PATH: "/admin"
   RGW_REGION: "us-east-1"
+  RGW_S3_ADVERTISED_ENDPOINT: "https://s3.movincloud.com"
   RGW_INSECURE_SKIP_VERIFY: "false"

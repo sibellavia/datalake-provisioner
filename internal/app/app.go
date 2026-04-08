@@ -33,6 +33,7 @@ func New(ctx context.Context) (*App, error) {
 		cfg.RGWEndpoint,
 		cfg.RGWAdminPath,
 		cfg.RGWRegion,
+		cfg.RGWS3AdvertisedEndpoint,
 		cfg.RGWAccessKeyID,
 		cfg.RGWSecretAccessKey,
 		cfg.RGWInsecureSkipVerify,
